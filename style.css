@@ -1,0 +1,913 @@
+/* Kart Race Turbo — Tactile Toy-Arcade Design (Matching body-runner & jagoan-kotak) */
+/* Zero backdrop-filter over canvas; visibility:hidden on inactive layers per web-game-perf */
+
+:root {
+  --sky: #5ec8ff;
+  --ink: #2a1a3a;
+  --muted: #6b5a7a;
+  --card: #fffdf7;
+  --card-lip: #efe8d8;
+  --sun: #ffd166;
+  --orange: #ff9f43;
+  --orange-d: #d55d00;
+  --green: #5bd77a;
+  --green-d: #2f9e44;
+  --blue: #4cc9f0;
+  --blue-d: #1d70b8;
+  --pink: #ff4d6d;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sky);
+  color: var(--ink);
+  font-family: 'Fredoka', 'Baloo 2', system-ui, -apple-system, sans-serif;
+  touch-action: none;
+}
+
+#game-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 1;
+}
+
+.hidden {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+
+#split-divider {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 5px;
+  transform: translateX(-50%);
+  background: #fff;
+  border-left: 2px solid var(--ink);
+  border-right: 2px solid var(--ink);
+  z-index: 8;
+}
+
+/* Top Utility Chips */
+#top-bar {
+  position: fixed;
+  top: 12px;
+  right: 14px;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.top-actions {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill-btn {
+  background: var(--card);
+  color: var(--ink);
+  border: 3px solid #fff;
+  box-shadow: 0 6px 16px -6px rgba(42, 26, 58, 0.45), inset 0 -3px 0 var(--card-lip);
+  padding: 7px 13px;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.pill-btn:active {
+  transform: scale(0.96);
+}
+
+.pill-btn.active {
+  background: #eafbea;
+  color: #14532d;
+}
+
+/* Debug Panel */
+#debug-panel {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 35;
+  background: var(--ink);
+  color: var(--sun);
+  border: 2px solid #fff;
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Live Webcam PiP Widget */
+.webcam-pip {
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  width: 205px;
+  background: #1b2a44;
+  border: 4px solid #fff;
+  border-radius: 22px;
+  overflow: hidden;
+  z-index: 28;
+  box-shadow: 0 14px 30px -10px rgba(42, 26, 58, 0.5);
+}
+
+#webcam-video {
+  display: none;
+}
+
+#webcam-overlay {
+  width: 100%;
+  height: 128px;
+  display: block;
+  background: #1b2a44;
+}
+
+.pip-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(27, 42, 68, 0.94);
+}
+
+.pip-mini-btn {
+  background: linear-gradient(180deg, var(--orange), #ff7a1a);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 0 var(--orange-d);
+}
+
+/* Left-Docked Showcase Main Menu (Like jagoan-kotak) */
+.menu-showcase {
+  position: fixed;
+  inset: 0;
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  background: linear-gradient(90deg, rgba(25, 35, 68, 0.42), rgba(25, 35, 68, 0) 58%);
+  pointer-events: none;
+}
+
+.menu-panel {
+  pointer-events: auto;
+  width: min(465px, 100%);
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  margin-left: clamp(0px, 3.5vw, 48px);
+  padding: 22px 22px 18px;
+  border-radius: 28px;
+  background: rgba(255, 253, 247, 0.96);
+  border: 5px solid #fff;
+  box-shadow: 0 30px 60px -22px rgba(42, 26, 58, 0.55), inset 0 -6px 0 var(--card-lip);
+  animation: slideIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-28px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.comic-logo {
+  display: grid;
+  justify-items: start;
+  line-height: 0.88;
+  margin: 0 0 8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.comic-logo span {
+  display: block;
+  font-size: clamp(38px, 6vw, 54px);
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+
+.comic-logo .l1 {
+  color: #fff;
+  text-shadow: 0 5px 0 var(--ink), 0 10px 18px rgba(42, 26, 58, 0.22);
+  transform: rotate(-2deg);
+}
+
+.comic-logo .l2 {
+  color: var(--orange);
+  text-shadow: 0 5px 0 var(--ink), 0 10px 18px rgba(42, 26, 58, 0.22);
+  margin-left: 24px;
+  transform: rotate(-2deg);
+  animation: wobble 3s ease-in-out infinite;
+}
+
+@keyframes wobble {
+  50% { transform: rotate(1deg) translateY(-2px); }
+}
+
+.menu-tagline {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.35;
+  margin-bottom: 12px;
+}
+
+.menu-tagline b {
+  color: var(--ink);
+}
+
+/* Circuit & Driver Pickers */
+.picker-section {
+  margin-bottom: 10px;
+}
+
+.picker-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 6px;
+}
+
+.choice-card {
+  background: #fff;
+  color: var(--ink);
+  border: 3px solid #ece4d5;
+  border-radius: 16px;
+  padding: 7px 9px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: transform 0.1s, border-color 0.15s;
+}
+
+.choice-card:active {
+  transform: scale(0.96);
+}
+
+.choice-card.selected {
+  border-color: var(--orange);
+  background: #fff6e8;
+  box-shadow: 0 0 0 3px #ffe0b5;
+}
+
+.choice-card strong {
+  font-size: 0.84rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.choice-card small {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.swatch-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Tactile 3D Buttons */
+.mode-stack {
+  display: grid;
+  gap: 9px;
+  margin: 12px 0;
+}
+
+.mode-split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn-3d {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 18px;
+  font: inherit;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.1s;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+}
+
+.btn-3d:active {
+  transform: translateY(3px);
+}
+
+.btn-3d .btn-ico {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.25);
+  font-size: 1.35rem;
+  flex-shrink: 0;
+}
+
+.btn-3d .btn-txt {
+  display: grid;
+  line-height: 1.12;
+}
+
+.btn-3d strong {
+  font-size: 1.02rem;
+}
+
+.btn-3d small {
+  font-size: 0.74rem;
+  font-weight: 600;
+  opacity: 0.94;
+  margin-top: 2px;
+}
+
+.orange-btn {
+  background: linear-gradient(180deg, var(--orange), #ff7a1a);
+  box-shadow: 0 5px 0 var(--orange-d), 0 14px 26px -10px rgba(255, 122, 26, 0.65);
+}
+
+.green-btn {
+  background: linear-gradient(180deg, var(--green), #3bc15d);
+  box-shadow: 0 5px 0 var(--green-d), 0 14px 26px -10px rgba(59, 193, 93, 0.55);
+}
+
+.blue-btn {
+  background: linear-gradient(180deg, var(--blue), #229ED9);
+  box-shadow: 0 5px 0 var(--blue-d), 0 14px 26px -10px rgba(34, 158, 217, 0.55);
+}
+
+.btn-soft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 11px 16px;
+  border-radius: 16px;
+  background: #eef4fa;
+  color: var(--ink);
+  border: 2px solid #d5e3f0;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.btn-soft.small-btn {
+  width: auto;
+  padding: 7px 13px;
+  font-size: 0.84rem;
+}
+
+.btn-soft.danger-soft {
+  background: #ffe5ec;
+  border-color: #ffb3c6;
+  color: #9b1237;
+}
+
+/* Visual Motion Reference Strip */
+.moves-strip {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.moves-strip li {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 14px;
+  background: #f3f8ff;
+  border: 2px solid #dcebff;
+}
+
+.moves-strip i {
+  font-style: normal;
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.moves-strip b {
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
+.moves-strip span {
+  font-size: 0.65rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Centered Overlay Modals (Calibration, LAN Lobby, Podium) */
+.overlay-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: 58px 16px 16px;
+  overflow-y: auto;
+  background: rgba(30, 42, 74, 0.35);
+}
+
+.cream-card {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  padding: 24px 24px 20px;
+  border-radius: 28px;
+  background: var(--card);
+  border: 5px solid #fff;
+  box-shadow: 0 30px 60px -22px rgba(42, 26, 58, 0.55), inset 0 -6px 0 var(--card-lip);
+  text-align: center;
+}
+
+.wide-card {
+  width: min(740px, 100%);
+  text-align: left;
+}
+
+.cream-card h2 {
+  font-size: 1.7rem;
+  margin-bottom: 6px;
+}
+
+.card-lead {
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+
+.calib-status-box {
+  background: #f3f8ff;
+  border: 2px solid #dcebff;
+  border-radius: 18px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.calib-timer {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--orange-d);
+}
+
+#calib-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.modal-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Race HUD */
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.countdown-banner {
+  position: fixed;
+  top: 32%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(4rem, 11vw, 7rem);
+  font-weight: 700;
+  color: var(--sun);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 8px 0 var(--ink);
+}
+
+.hud-panels {
+  position: fixed;
+  top: 12px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.hud-cluster {
+  display: grid;
+  gap: 7px;
+  max-width: 390px;
+}
+
+#hud-p2 {
+  margin-top: 44px;
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.hud-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 13px;
+  border-radius: 16px;
+  background: var(--card);
+  border: 3px solid #fff;
+  box-shadow: 0 6px 16px -6px rgba(42, 26, 58, 0.45), inset 0 -3px 0 var(--card-lip);
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.hud-pill.rank {
+  background: var(--sun);
+  font-size: 1.15rem;
+}
+
+.hud-pill.wumpa {
+  background: #fff4c2;
+}
+
+.hud-pill.item {
+  background: #fff0f5;
+  color: #9b1237;
+}
+
+.hud-pill.gesture {
+  background: var(--green);
+  color: #0d3b1d;
+}
+
+.hud-pill small {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.energy-bar-wrap {
+  width: min(330px, 65vw);
+}
+
+.energy-bar {
+  position: relative;
+  height: 26px;
+  border-radius: 12px;
+  background: rgba(42, 26, 58, 0.62);
+  border: 3px solid #fff;
+  overflow: hidden;
+  box-shadow: 0 6px 16px -6px rgba(42, 26, 58, 0.45);
+}
+
+.energy-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, var(--green), var(--sun), var(--orange));
+  transition: width 0.12s linear;
+}
+
+.energy-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+}
+
+/* Circuit Mini-Map */
+.minimap-card {
+  margin-top: 44px;
+  background: rgba(255, 253, 247, 0.9);
+  border: 4px solid #fff;
+  border-radius: 20px;
+  padding: 6px;
+  box-shadow: 0 10px 24px -8px rgba(42, 26, 58, 0.45);
+}
+
+#minimap-canvas {
+  display: block;
+  width: 112px;
+  height: 112px;
+}
+
+/* Touch Controls */
+.touch-controls {
+  position: fixed;
+  bottom: 14px;
+  left: 14px;
+  right: 232px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.touch-pad {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.touch-btn {
+  background: var(--card);
+  color: var(--ink);
+  border: 3px solid #fff;
+  box-shadow: 0 5px 0 var(--card-lip), 0 8px 18px -6px rgba(42, 26, 58, 0.45);
+  border-radius: 16px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.touch-btn.accent-turbo {
+  background: var(--green);
+  color: #0d3b1d;
+}
+
+.touch-btn.accent-attack {
+  background: #ffb4a2;
+  color: #6b1111;
+}
+
+/* LAN Lobby Elements */
+.lan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.lan-banner {
+  background: #e8f5ff;
+  border: 2px solid #bae0ff;
+  border-radius: 14px;
+  padding: 9px 12px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+.lan-error {
+  background: #ffe5ec;
+  border: 2px solid #ffb3c6;
+  color: #9b1237;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.lan-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.lan-box {
+  background: #f8f5ee;
+  border: 2px solid #e6dfd1;
+  border-radius: 18px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.text-input {
+  width: 100%;
+  background: #fff;
+  border: 2px solid #d5cebe;
+  color: var(--ink);
+  padding: 9px 11px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.code-input {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  text-align: center;
+  max-width: 125px;
+}
+
+.join-code-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.lan-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.lan-rooms-list, .room-players-list, .standings-list {
+  display: grid;
+  gap: 6px;
+}
+
+.room-item, .standing-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fff;
+  border: 2px solid #e6dfd1;
+  border-radius: 14px;
+  padding: 9px 12px;
+  font-size: 0.88rem;
+}
+
+.room-code-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #fff8e1;
+  border: 2px solid var(--sun);
+  border-radius: 16px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.room-code-banner strong {
+  font-size: 1.6rem;
+  color: var(--orange-d);
+  letter-spacing: 0.14em;
+}
+
+.track-tag {
+  background: var(--orange);
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.trophy-stars {
+  font-size: 2.5rem;
+  margin-bottom: 4px;
+}
+
+.activity-summary {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: #f3f8ff;
+  border: 2px solid #dcebff;
+  padding: 9px 12px;
+  border-radius: 14px;
+}
+
+/* Mobile & 360px Responsive Layout */
+@media (max-width: 720px) {
+  #top-bar {
+    top: 8px;
+    right: 8px;
+    left: 8px;
+  }
+
+  .pill-btn {
+    padding: 5px 9px;
+    font-size: 0.72rem;
+  }
+
+  .menu-showcase {
+    padding: 50px 10px 10px;
+    align-items: flex-start;
+  }
+
+  .menu-panel {
+    margin-left: 0;
+    max-height: calc(100vh - 62px);
+    padding: 16px;
+  }
+
+  .mode-split-row, .lan-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .moves-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  body[data-screen="menu"] .webcam-pip,
+  body[data-screen="lan_lobby"] .webcam-pip {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .webcam-pip {
+    width: 124px;
+    bottom: 8px;
+    right: 8px;
+  }
+
+  #webcam-overlay {
+    height: 78px;
+  }
+
+  .hud-panels {
+    top: 46px;
+  }
+
+  .hud-pill {
+    padding: 5px 9px;
+    font-size: 0.78rem;
+  }
+
+  .minimap-card {
+    display: none;
+  }
+
+  .touch-controls {
+    right: 140px;
+    bottom: 8px;
+  }
+
+  .touch-btn {
+    padding: 8px 10px;
+    font-size: 0.74rem;
+  }
+}

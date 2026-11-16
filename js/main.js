@@ -1,0 +1,972 @@
+// Main Application Orchestrator for Kart Race Turbo
+// Wires 3D Toon Renderer, Webcam Pose Worker, MotionController, Keyboard/Gamepad/Touch Fallback,
+// Live Circuit Mini-Map, Single Player, 2-Player Split-Screen, Wi-Fi/LAN Multiplayer, and window.__game debug hooks.
+
+import { MotionController, makeSyntheticPose } from './motion.js';
+import { RaceSimulation, TRACKS, DRIVERS, getTrackById } from './sim.js';
+import { RaceRenderer } from './renderer.js';
+import { SoundFX } from './audio.js';
+import { LanClient } from './net.js';
+
+const ITEM_LABELS = {
+  rocket: '🚀 ROCKET',
+  bomb: '💣 BOMB',
+  tnt: '🧨 TNT CRATE',
+  shield: '🛡️ SHIELD',
+};
+
+function ordinal(n) {
+  return ['1st', '2nd', '3rd', '4th'][n - 1] || `${n}th`;
+}
+
+const state = {
+  screen: 'menu', // 'menu' | 'calibrate' | 'lan_lobby' | 'racing' | 'finished'
+  mode: '1p', // '1p' | '2p' | 'lan'
+  selectedTrackId: 'island',
+  selectedDriverId: 'bandi',
+  autoGas: true,
+  webcamEnabled: false,
+  webcamReady: false,
+  latestPoses: [],
+  syntheticPoses: null,
+  poseMs: 0,
+  fps: 60,
+  sim: null,
+  lastSnapshot: null,
+  lanPlayerId: null,
+};
+
+const canvas = document.getElementById('game-canvas');
+const renderer = new RaceRenderer(canvas);
+const sfx = new SoundFX();
+const motionCtrl = new MotionController({ autoGas: true });
+
+const minimapCanvas = document.getElementById('minimap-canvas');
+const minimapCtx = minimapCanvas ? minimapCanvas.getContext('2d') : null;
+
+// Keyboard & Touch input state
+const keys = new Set();
+const touchHeld = new Set();
+
+window.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  keys.add(e.code);
+});
+window.addEventListener('keyup', (e) => {
+  keys.delete(e.code);
+});
+
+for (const btn of document.querySelectorAll('[data-touch]')) {
+  const action = btn.getAttribute('data-touch');
+  const start = (e) => { e.preventDefault(); touchHeld.add(action); };
+  const end = (e) => { e.preventDefault(); touchHeld.delete(action); };
+  btn.addEventListener('pointerdown', start);
+  btn.addEventListener('pointerup', end);
+  btn.addEventListener('pointercancel', end);
+  btn.addEventListener('pointerleave', end);
+}
+
+// Menu Preview Simulation (updates live when user clicks a circuit or driver!)
+let menuPreviewSim = null;
+function rebuildMenuPreview() {
+  menuPreviewSim = new RaceSimulation({
+    trackId: state.selectedTrackId,
+    mode: '1p',
+    players: [{ id: 'showcase', name: 'Showcase', driverId: state.selectedDriverId, isAI: true }],
+    totalLaps: 3,
+    fillAI: true,
+  });
+  menuPreviewSim.countdown = 0;
+  menuPreviewSim.status = 'racing';
+}
+rebuildMenuPreview();
+
+// Build Menu Track & Driver Cards
+const trackListEl = document.getElementById('track-list');
+const driverListEl = document.getElementById('driver-list');
+
+function renderSelectors() {
+  trackListEl.innerHTML = '';
+  for (const t of TRACKS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `choice-card ${t.id === state.selectedTrackId ? 'selected' : ''}`;
+    btn.innerHTML = `
+      <strong><span class="swatch-dot" style="background:${t.theme.curbA}"></span>${t.name}</strong>
+      <small>${t.subtitle}</small>
+    `;
+    btn.addEventListener('click', () => {
+      state.selectedTrackId = t.id;
+      rebuildMenuPreview();
+      renderSelectors();
+    });
+    trackListEl.appendChild(btn);
+  }
+
+  driverListEl.innerHTML = '';
+  for (const d of DRIVERS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `choice-card ${d.id === state.selectedDriverId ? 'selected' : ''}`;
+    btn.innerHTML = `
+      <strong><span class="swatch-dot" style="background:${d.color}"></span>${d.name}</strong>
+      <small>${d.role}</small>
+    `;
+    btn.addEventListener('click', () => {
+      state.selectedDriverId = d.id;
+      rebuildMenuPreview();
+      renderSelectors();
+    });
+    driverListEl.appendChild(btn);
+  }
+}
+renderSelectors();
+
+// Modal visibility switcher
+const modals = {
+  menu: document.getElementById('menu-modal'),
+  calibrate: document.getElementById('calib-modal'),
+  lan_lobby: document.getElementById('lan-modal'),
+  racing: document.getElementById('race-hud'),
+  finished: document.getElementById('finish-modal'),
+};
+const splitDividerEl = document.getElementById('split-divider');
+const btnMenuReturn = document.getElementById('btn-menu-return');
+const minimapCardEl = document.getElementById('minimap-card');
+
+function setScreen(screenName) {
+  state.screen = screenName;
+  document.body.setAttribute('data-screen', screenName);
+  for (const [k, el] of Object.entries(modals)) {
+    el.classList.toggle('hidden', k !== screenName);
+  }
+  btnMenuReturn.classList.toggle('hidden', screenName === 'menu');
+  splitDividerEl.classList.toggle('hidden', !(screenName === 'racing' && state.mode === '2p'));
+  document.getElementById('hud-p2').classList.toggle('hidden', !(screenName === 'racing' && state.mode === '2p'));
+  if (minimapCardEl) {
+    minimapCardEl.classList.toggle('hidden', state.mode === '2p');
+  }
+}
+setScreen('menu');
+
+// Top Utility Buttons
+const btnAutoGas = document.getElementById('btn-auto-gas');
+btnAutoGas.addEventListener('click', () => {
+  state.autoGas = !state.autoGas;
+  motionCtrl.setAutoGas(state.autoGas);
+  btnAutoGas.textContent = `⚡ Auto-Gas: ${state.autoGas ? 'ON' : 'WHEEL'}`;
+  btnAutoGas.classList.toggle('active', state.autoGas);
+});
+
+const btnComfort = document.getElementById('btn-comfort');
+btnComfort.addEventListener('click', () => {
+  renderer.comfortMode = !renderer.comfortMode;
+  btnComfort.textContent = `🌀 Comfort: ${renderer.comfortMode ? 'ON' : 'OFF'}`;
+  btnComfort.classList.toggle('active', renderer.comfortMode);
+});
+
+const btnSound = document.getElementById('btn-sound');
+btnSound.addEventListener('click', () => {
+  const muted = sfx.toggleMute();
+  btnSound.textContent = muted ? '🔇 Muted' : '🔊 SFX';
+});
+
+btnMenuReturn.addEventListener('click', () => {
+  if (state.mode === 'lan') lanClient.leaveRoom();
+  state.sim = null;
+  setScreen('menu');
+});
+
+// Webcam & Pose Worker Setup (with Main-Thread fallback matching jagoan-kotak/js/main.js)
+const videoEl = document.getElementById('webcam-video');
+const pipCanvas = document.getElementById('webcam-overlay');
+const pipCtx = pipCanvas.getContext('2d');
+const pipStatusEl = document.getElementById('pip-status');
+let poseWorker = null;
+let mainThreadLandmarker = null;
+let workerBusy = false;
+let lastVideoTime = -1;
+let cameraStartPromise = null;
+
+function initPoseWorker() {
+  return new Promise((resolve, reject) => {
+    let w;
+    try {
+      w = new Worker(new URL('./pose-worker.js', import.meta.url));
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const timer = setTimeout(() => {
+      w.terminate();
+      reject(new Error('Pose worker init timeout'));
+    }, 15000);
+
+    w.onerror = (err) => {
+      clearTimeout(timer);
+      w.terminate();
+      reject(err);
+    };
+
+    w.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'ready') {
+        clearTimeout(timer);
+        w.onerror = null;
+        resolve(w);
+      } else if (d.type === 'error') {
+        clearTimeout(timer);
+        w.terminate();
+        reject(new Error(d.message || 'Worker error'));
+      } else if (d.type === 'poses') {
+        workerBusy = false;
+        state.poseMs = d.poseMs || 0;
+        state.latestPoses = (d.landmarks || []).map((lm, idx) => ({
+          landmarks: lm,
+          worldLandmarks: d.worldLandmarks ? d.worldLandmarks[idx] : null,
+        }));
+      }
+    };
+    w.postMessage({ type: 'init', numPoses: 2 });
+  });
+}
+
+async function initMainThreadLandmarker() {
+  const visionMod = await import('./vendor/mediapipe/vision_bundle.mjs');
+  const { FilesetResolver, PoseLandmarker } = visionMod;
+  const files = await FilesetResolver.forVisionTasks('/js/vendor/mediapipe/wasm');
+  for (const delegate of ['GPU', 'CPU']) {
+    try {
+      return await PoseLandmarker.createFromOptions(files, {
+        baseOptions: {
+          modelAssetPath: '/js/vendor/mediapipe/pose_landmarker_lite.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numPoses: 2,
+      });
+    } catch (_) {}
+  }
+  throw new Error('Main-thread PoseLandmarker failed');
+}
+
+async function startWebcamAndWorker() {
+  if (state.webcamEnabled && state.webcamReady) return true;
+  if (cameraStartPromise) return cameraStartPromise;
+
+  cameraStartPromise = (async () => {
+    try {
+      pipStatusEl.textContent = '📷 Allow Camera...';
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false,
+      });
+      videoEl.srcObject = stream;
+      await videoEl.play();
+      state.webcamEnabled = true;
+
+      pipStatusEl.textContent = '⏳ Loading Pose AI...';
+      try {
+        poseWorker = await initPoseWorker();
+        state.webcamReady = true;
+        pipStatusEl.textContent = '📷 Motion Active';
+      } catch (workerErr) {
+        console.warn('Pose worker fallback to main thread:', workerErr);
+        poseWorker = null;
+        mainThreadLandmarker = await initMainThreadLandmarker();
+        state.webcamReady = true;
+        pipStatusEl.textContent = '📷 Motion Active';
+      }
+
+      const pumpVideoFrame = async () => {
+        if (!state.webcamEnabled) return;
+        if (state.webcamReady && videoEl.readyState >= 2 && videoEl.currentTime !== lastVideoTime) {
+          lastVideoTime = videoEl.currentTime;
+          if (poseWorker) {
+            if (!workerBusy) {
+              workerBusy = true;
+              createImageBitmap(videoEl, { resizeWidth: 480, resizeHeight: 360 })
+                .then((bmp) => poseWorker.postMessage({ type: 'frame', bitmap: bmp, ts: performance.now() }, [bmp]))
+                .catch(() => { workerBusy = false; });
+            }
+          } else if (mainThreadLandmarker) {
+            const t0 = performance.now();
+            try {
+              const res = mainThreadLandmarker.detectForVideo(videoEl, t0);
+              state.poseMs = performance.now() - t0;
+              state.latestPoses = (res.landmarks || []).map((lm, idx) => ({
+                landmarks: lm,
+                worldLandmarks: res.worldLandmarks ? res.worldLandmarks[idx] : null,
+              }));
+            } catch (_) {}
+          }
+        }
+        if ('requestVideoFrameCallback' in videoEl) {
+          videoEl.requestVideoFrameCallback(pumpVideoFrame);
+        } else {
+          setTimeout(pumpVideoFrame, 33);
+        }
+      };
+      pumpVideoFrame();
+      return true;
+    } catch (err) {
+      console.warn('Camera unavailable:', err);
+      pipStatusEl.textContent = '⌨️ Keyboard Mode';
+      cameraStartPromise = null;
+      return false;
+    }
+  })();
+
+  return cameraStartPromise;
+}
+
+function drawPipOverlay(motionInputs) {
+  const w = pipCanvas.width;
+  const h = pipCanvas.height;
+  pipCtx.clearRect(0, 0, w, h);
+
+  if (state.webcamEnabled && videoEl.readyState >= 2) {
+    pipCtx.save();
+    pipCtx.translate(w, 0);
+    pipCtx.scale(-1, 1);
+    pipCtx.drawImage(videoEl, 0, 0, w, h);
+    pipCtx.restore();
+  } else {
+    pipCtx.fillStyle = '#1b2a44';
+    pipCtx.fillRect(0, 0, w, h);
+  }
+
+  // Draw calibrated neutral center guide line
+  if (state.mode === '2p') {
+    pipCtx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+    pipCtx.lineWidth = 2;
+    pipCtx.beginPath();
+    pipCtx.moveTo(w * 0.5, 0);
+    pipCtx.lineTo(w * 0.5, h);
+    pipCtx.stroke();
+  } else if (motionCtrl.slots[0].calibrated) {
+    const nx = (1 - motionCtrl.slots[0].neutralX) * w;
+    pipCtx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    pipCtx.setLineDash([4, 4]);
+    pipCtx.lineWidth = 1.5;
+    pipCtx.beginPath();
+    pipCtx.moveTo(nx, 0);
+    pipCtx.lineTo(nx, h);
+    pipCtx.stroke();
+    pipCtx.setLineDash([]);
+  }
+
+  const poses = state.syntheticPoses || state.latestPoses;
+  for (let pIdx = 0; pIdx < poses.length; pIdx++) {
+    const lm = poses[pIdx].landmarks || poses[pIdx];
+    if (!lm || lm.length < 17) continue;
+    const color = pIdx === 0 ? '#5bd77a' : '#ffd166';
+    pipCtx.strokeStyle = color;
+    pipCtx.lineWidth = 3.5;
+    pipCtx.lineCap = 'round';
+
+    const pairs = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24]];
+    for (const [a, b] of pairs) {
+      if (!lm[a] || !lm[b]) continue;
+      pipCtx.beginPath();
+      pipCtx.moveTo((1 - lm[a].x) * w, lm[a].y * h);
+      pipCtx.lineTo((1 - lm[b].x) * w, lm[b].y * h);
+      pipCtx.stroke();
+    }
+
+    pipCtx.fillStyle = '#ffd166';
+    for (const idx of [0, 11, 12, 15, 16]) {
+      if (!lm[idx]) continue;
+      pipCtx.beginPath();
+      pipCtx.arc((1 - lm[idx].x) * w, lm[idx].y * h, 4.5, 0, Math.PI * 2);
+      pipCtx.fill();
+    }
+
+    if (lm[15] && lm[16]) {
+      const x1 = (1 - lm[15].x) * w;
+      const y1 = lm[15].y * h;
+      const x2 = (1 - lm[16].x) * w;
+      const y2 = lm[16].y * h;
+      const cx = (x1 + x2) * 0.5;
+      const cy = (y1 + y2) * 0.5;
+      pipCtx.strokeStyle = '#5ef0ff';
+      pipCtx.lineWidth = 2.5;
+      pipCtx.beginPath();
+      pipCtx.arc(cx, cy, 18, 0, Math.PI * 2);
+      pipCtx.moveTo(x1, y1);
+      pipCtx.lineTo(x2, y2);
+      pipCtx.stroke();
+    }
+  }
+
+  const inp = motionInputs[0];
+  if (inp) {
+    pipCtx.fillStyle = 'rgba(42, 26, 58, 0.85)';
+    pipCtx.beginPath();
+    pipCtx.roundRect(6, 6, 108, 22, 8);
+    pipCtx.fill();
+    pipCtx.fillStyle = '#ffd166';
+    pipCtx.font = '700 11px Fredoka, system-ui, sans-serif';
+    pipCtx.fillText(inp.poseLabel || 'READY', 12, 21);
+  }
+}
+
+function drawMinimap(snapshot) {
+  if (!minimapCtx || !snapshot || state.mode === '2p') return;
+  const track = getTrackById(snapshot.trackId);
+  const w = minimapCanvas.width;
+  const h = minimapCanvas.height;
+  minimapCtx.clearRect(0, 0, w, h);
+
+  // Compute bounding box of track samples
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const s of track.samples) {
+    if (s.x < minX) minX = s.x;
+    if (s.x > maxX) maxX = s.x;
+    if (s.z < minZ) minZ = s.z;
+    if (s.z > maxZ) maxZ = s.z;
+  }
+  const pad = 14;
+  const spanX = Math.max(1, maxX - minX);
+  const spanZ = Math.max(1, maxZ - minZ);
+  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanZ);
+  const ox = (w - spanX * scale) * 0.5 - minX * scale;
+  const oz = (h - spanZ * scale) * 0.5 - minZ * scale;
+
+  // Draw circuit loop
+  minimapCtx.lineCap = 'round';
+  minimapCtx.lineJoin = 'round';
+  minimapCtx.beginPath();
+  track.samples.forEach((s, idx) => {
+    const px = ox + s.x * scale;
+    const py = oz + s.z * scale;
+    if (idx === 0) minimapCtx.moveTo(px, py);
+    else minimapCtx.lineTo(px, py);
+  });
+  minimapCtx.closePath();
+  minimapCtx.strokeStyle = '#2a1a3a';
+  minimapCtx.lineWidth = 9;
+  minimapCtx.stroke();
+  minimapCtx.strokeStyle = '#e9c99a';
+  minimapCtx.lineWidth = 5;
+  minimapCtx.stroke();
+
+  // Draw karts as colored dots
+  for (const k of snapshot.karts) {
+    const drv = DRIVERS.find((d) => d.id === k.driverId) || DRIVERS[0];
+    const px = ox + k.x * scale;
+    const py = oz + k.z * scale;
+    minimapCtx.fillStyle = drv.color;
+    minimapCtx.strokeStyle = '#fff';
+    minimapCtx.lineWidth = 2;
+    minimapCtx.beginPath();
+    minimapCtx.arc(px, py, k.isAI ? 4.5 : 6.5, 0, Math.PI * 2);
+    minimapCtx.fill();
+    minimapCtx.stroke();
+  }
+}
+
+// Calibration Flow (waits for AI model + real pose detection before completing countdown)
+const calibTimerEl = document.getElementById('calib-timer');
+const calibHintEl = document.getElementById('calib-hint');
+let pendingAfterCalib = null;
+let calibInterval = null;
+
+function stopCalibLoop() {
+  if (calibInterval) {
+    clearInterval(calibInterval);
+    calibInterval = null;
+  }
+}
+
+function openCalibration(afterCb) {
+  stopCalibLoop();
+  pendingAfterCalib = afterCb;
+  calibTimerEl.textContent = 'Ready';
+  calibHintEl.textContent = state.mode === '2p'
+    ? 'Player 1 stands on the LEFT, Player 2 stands on the RIGHT.'
+    : 'Sit or stand facing the camera so your head and shoulders are visible.';
+  setScreen('calibrate');
+}
+
+document.getElementById('btn-start-cam').addEventListener('click', async () => {
+  stopCalibLoop();
+  calibTimerEl.textContent = 'Loading Camera...';
+  calibHintEl.textContent = 'Please allow browser webcam access when prompted.';
+  const ok = await startWebcamAndWorker();
+  if (!ok) {
+    calibTimerEl.textContent = 'No Camera';
+    if (pendingAfterCalib) pendingAfterCalib();
+    return;
+  }
+
+  let heldSec = 0;
+  let lastBeepSec = 4;
+  calibTimerEl.textContent = 'Look at Camera 👀';
+
+  calibInterval = setInterval(() => {
+    const poses = state.syntheticPoses || state.latestPoses;
+    if (poses.length === 0) {
+      calibTimerEl.textContent = 'Step Into View 👀';
+      calibHintEl.textContent = 'Make sure your head and shoulders are visible in the camera box (bottom-right).';
+      return;
+    }
+
+    heldSec += 0.2;
+    const rem = Math.max(0, Math.ceil(2.4 - heldSec));
+    calibHintEl.textContent = 'Awesome, camera sees you! Hold your neutral center posture... 👍';
+    if (rem > 0) {
+      calibTimerEl.textContent = `${rem}...`;
+      if (rem !== lastBeepSec) {
+        lastBeepSec = rem;
+        sfx.countdown(rem);
+      }
+    } else {
+      stopCalibLoop();
+      motionCtrl.calibrate(poses, state.mode === '2p' ? 2 : 1);
+      calibTimerEl.textContent = 'Calibrated! 🏁';
+      pipStatusEl.textContent = '📷 Calibrated & Active';
+      sfx.countdown(0);
+      if (pendingAfterCalib) pendingAfterCalib();
+    }
+  }, 200);
+});
+
+document.getElementById('btn-skip-cam').addEventListener('click', () => {
+  stopCalibLoop();
+  if (pendingAfterCalib) pendingAfterCalib();
+});
+
+document.getElementById('btn-recalibrate').addEventListener('click', async () => {
+  if (!state.webcamEnabled) {
+    await startWebcamAndWorker();
+  }
+  const poses = state.syntheticPoses || state.latestPoses;
+  if (poses.length > 0) {
+    motionCtrl.calibrate(poses, state.mode === '2p' ? 2 : 1);
+    pipStatusEl.textContent = '📷 Center Locked! 👍';
+    sfx.countdown(0);
+  } else {
+    pipStatusEl.textContent = '👀 Step in front of cam';
+  }
+});
+
+// Start Local Race (1P or 2P Split-Screen)
+function startLocalRace(mode) {
+  state.mode = mode;
+  const p1Driver = state.selectedDriverId;
+  const p2Driver = DRIVERS.find((d) => d.id !== p1Driver)?.id || 'nitro';
+  const players = mode === '2p'
+    ? [
+        { id: 'p1', name: 'Player 1', driverId: p1Driver, isAI: false },
+        { id: 'p2', name: 'Player 2', driverId: p2Driver, isAI: false },
+      ]
+    : [{ id: 'p1', name: 'Player 1', driverId: p1Driver, isAI: false }];
+
+  state.sim = new RaceSimulation({
+    trackId: state.selectedTrackId,
+    mode,
+    players,
+    totalLaps: 3,
+    fillAI: true,
+  });
+  renderer.camStates[0].initialized = false;
+  renderer.camStates[1].initialized = false;
+  setScreen('racing');
+}
+
+document.getElementById('btn-mode-1p').addEventListener('click', () => {
+  state.mode = '1p';
+  openCalibration(() => startLocalRace('1p'));
+});
+
+document.getElementById('btn-mode-2p').addEventListener('click', () => {
+  state.mode = '2p';
+  openCalibration(() => startLocalRace('2p'));
+});
+
+// Wi-Fi / LAN Multiplayer Wiring
+const lanErrorEl = document.getElementById('lan-error');
+const lanUrlTextEl = document.getElementById('lan-url-text');
+const lanRoomsListEl = document.getElementById('lan-rooms-list');
+const lanJoinViewEl = document.getElementById('lan-join-view');
+const lanRoomViewEl = document.getElementById('lan-room-view');
+const roomCodeDisplayEl = document.getElementById('room-code-display');
+const roomTrackDisplayEl = document.getElementById('room-track-display');
+const roomPlayersListEl = document.getElementById('room-players-list');
+const btnLanStart = document.getElementById('btn-lan-start');
+
+function showLanError(msg) {
+  if (!msg) {
+    lanErrorEl.classList.add('hidden');
+    return;
+  }
+  lanErrorEl.textContent = msg;
+  lanErrorEl.classList.remove('hidden');
+}
+
+const lanClient = new LanClient({
+  onRoomState: (room, myPlayerId) => {
+    state.lanPlayerId = myPlayerId;
+    showLanError('');
+    if (room.status === 'racing') {
+      setScreen('racing');
+      return;
+    }
+    lanJoinViewEl.classList.add('hidden');
+    lanRoomViewEl.classList.remove('hidden');
+    roomCodeDisplayEl.textContent = room.code;
+    roomTrackDisplayEl.textContent = getTrackById(room.trackId).name;
+    roomPlayersListEl.innerHTML = '';
+    for (const p of room.players) {
+      if (!p.connected) continue;
+      const row = document.createElement('div');
+      row.className = 'room-item';
+      row.innerHTML = `
+        <strong>${p.name} ${p.id === room.hostId ? '👑 (Host)' : ''} ${p.id === myPlayerId ? '(You)' : ''}</strong>
+        <span>${p.driverId.toUpperCase()}</span>
+      `;
+      roomPlayersListEl.appendChild(row);
+    }
+    btnLanStart.style.display = room.hostId === myPlayerId ? 'flex' : 'none';
+  },
+  onSnapshot: (snapshot, myPlayerId) => {
+    state.lanPlayerId = myPlayerId;
+    state.lastSnapshot = snapshot;
+    handleSimulationEvents(snapshot.events || []);
+    if (state.screen !== 'racing' && snapshot.status !== 'finished') {
+      setScreen('racing');
+    }
+    if (snapshot.status === 'finished' && state.screen !== 'finished') {
+      showFinishModal(snapshot);
+    }
+  },
+  onError: (msg) => showLanError(msg),
+});
+
+async function refreshLanLobby() {
+  showLanError('');
+  const info = await lanClient.fetchLanInfo();
+  if (info.urls && info.urls.length > 0) {
+    lanUrlTextEl.textContent = info.urls[0];
+  }
+  lanRoomsListEl.innerHTML = '';
+  if (!info.rooms || info.rooms.length === 0) {
+    lanRoomsListEl.innerHTML = '<p class="muted-note">No active rooms yet — click "Create Wi-Fi Room" to start one!</p>';
+    return;
+  }
+  for (const r of info.rooms) {
+    const item = document.createElement('div');
+    item.className = 'room-item';
+    item.innerHTML = `
+      <div>
+        <strong>Room ${r.code}</strong> — ${getTrackById(r.trackId).name}
+        <br/><small>Host: ${r.hostName} (${r.playerCount}/4 players)</small>
+      </div>
+      <button type="button" class="pip-mini-btn">Join</button>
+    `;
+    item.querySelector('button').addEventListener('click', () => {
+      const name = document.getElementById('lan-player-name').value || 'Racer';
+      lanClient.joinRoom({ code: r.code, name, driverId: state.selectedDriverId }).catch((e) => showLanError(e.message));
+    });
+    lanRoomsListEl.appendChild(item);
+  }
+}
+
+document.getElementById('btn-mode-lan').addEventListener('click', () => {
+  state.mode = 'lan';
+  lanJoinViewEl.classList.remove('hidden');
+  lanRoomViewEl.classList.add('hidden');
+  setScreen('lan_lobby');
+  refreshLanLobby();
+});
+
+document.getElementById('btn-lan-back').addEventListener('click', () => {
+  lanClient.leaveRoom();
+  setScreen('menu');
+});
+
+document.getElementById('btn-lan-refresh').addEventListener('click', refreshLanLobby);
+
+document.getElementById('btn-lan-create').addEventListener('click', () => {
+  const name = document.getElementById('lan-player-name').value || 'Host Racer';
+  lanClient.createRoom({
+    name,
+    driverId: state.selectedDriverId,
+    trackId: state.selectedTrackId,
+  }).catch((e) => showLanError(e.message));
+});
+
+document.getElementById('btn-lan-join').addEventListener('click', () => {
+  const code = document.getElementById('lan-room-code').value.trim().toUpperCase();
+  if (code.length !== 4) {
+    showLanError('Enter a 4-letter room code.');
+    return;
+  }
+  const name = document.getElementById('lan-player-name').value || 'Guest Racer';
+  lanClient.joinRoom({
+    code,
+    name,
+    driverId: state.selectedDriverId,
+  }).catch((e) => showLanError(e.message));
+});
+
+document.getElementById('btn-lan-start').addEventListener('click', () => {
+  lanClient.startRace(true);
+});
+
+document.getElementById('btn-lan-camera').addEventListener('click', () => {
+  openCalibration(() => setScreen('lan_lobby'));
+});
+
+document.getElementById('btn-lan-leave').addEventListener('click', () => {
+  lanClient.leaveRoom();
+  lanJoinViewEl.classList.remove('hidden');
+  lanRoomViewEl.classList.add('hidden');
+  refreshLanLobby();
+});
+
+// Combine Webcam Motion Input + Keyboard/Touch Input
+function buildCombinedInput(playerIdx, motionInput) {
+  const isP1 = playerIdx === 0;
+  const kbForward = isP1
+    ? (keys.has('KeyW') || (state.mode !== '2p' && keys.has('ArrowUp')))
+    : keys.has('ArrowUp');
+  const kbBrake = isP1
+    ? (keys.has('KeyS') || (state.mode !== '2p' && keys.has('ArrowDown')) || touchHeld.has('brake'))
+    : keys.has('ArrowDown');
+  const kbLeft = isP1
+    ? (keys.has('KeyA') || (state.mode !== '2p' && keys.has('ArrowLeft')) || touchHeld.has('left'))
+    : keys.has('ArrowLeft');
+  const kbRight = isP1
+    ? (keys.has('KeyD') || (state.mode !== '2p' && keys.has('ArrowRight')) || touchHeld.has('right'))
+    : keys.has('ArrowRight');
+  const kbTurbo = isP1
+    ? (keys.has('Space') || touchHeld.has('turbo'))
+    : (keys.has('ShiftRight') || keys.has('Numpad0'));
+  const kbAttack = isP1
+    ? (keys.has('KeyF') || keys.has('KeyE') || touchHeld.has('attack'))
+    : (keys.has('Enter') || keys.has('KeyK'));
+
+  const kbSteer = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
+  const useMotion = motionInput && motionInput.visible;
+
+  const steer = kbSteer !== 0 ? kbSteer : (useMotion ? motionInput.steer : 0);
+  const brake = kbBrake || Boolean(useMotion && motionInput.brake);
+  const reverse = kbBrake || Boolean(useMotion && motionInput.reverse);
+  const throttle = brake ? 0 : ((kbForward || state.autoGas || (useMotion && motionInput.throttle > 0)) ? 1 : 0);
+  const turbo = kbTurbo || Boolean(useMotion && motionInput.turbo);
+  const attack = kbAttack || Boolean(useMotion && motionInput.attack);
+  const hop = Boolean(useMotion && motionInput.hop);
+
+  let poseLabel = useMotion ? motionInput.poseLabel : (state.autoGas ? 'AUTO-GAS' : 'READY');
+  if (kbAttack) poseLabel = 'PUNCH! 💥';
+  else if (kbTurbo) poseLabel = 'TURBO! 🚀';
+  else if (kbBrake) poseLabel = 'BRAKE 🛑';
+  else if (kbLeft) poseLabel = 'LEFT ⬅️';
+  else if (kbRight) poseLabel = 'RIGHT ➡️';
+
+  return { throttle, brake, reverse, steer, turbo, attack, hop, poseLabel };
+}
+
+function handleSimulationEvents(events) {
+  for (const ev of events) {
+    if (ev.type === 'countdown') sfx.countdown(ev.count);
+    else if (ev.type === 'crate_smash') sfx.crateSmash();
+    else if (ev.type === 'fruit_pickup') sfx.fruitPickup();
+    else if (ev.type === 'turbo' || ev.type === 'pad_boost') sfx.turbo();
+    else if (ev.type === 'hop' || ev.type === 'ramp_jump') sfx.hop();
+    else if (ev.type === 'attack') sfx.attack();
+    else if (ev.type === 'explosion') sfx.explosion();
+    else if (ev.type === 'shield_block') sfx.shieldBlock();
+    else if (ev.type === 'lap') sfx.lap();
+    else if (ev.type === 'finish') sfx.victory();
+  }
+}
+
+function updateHudCard(prefix, kart, totalLaps, poseLabel) {
+  if (!kart) return;
+  document.getElementById(`${prefix}-rank`).textContent = ordinal(kart.rank);
+  document.getElementById(`${prefix}-lap`).textContent = `LAP ${kart.lap}/${totalLaps}`;
+  document.getElementById(`${prefix}-wumpa`).textContent = `🟠 ${kart.wumpa}/10`;
+  document.getElementById(`${prefix}-item`).textContent = kart.heldItem ? `${ITEM_LABELS[kart.heldItem]} (Punch!)` : '📦 No Item';
+  document.getElementById(`${prefix}-speed`).textContent = Math.max(0, Math.round(kart.speed * 3.2));
+  document.getElementById(`${prefix}-turbo-pct`).textContent = `${kart.turboCharge}%`;
+  document.getElementById(`${prefix}-turbo-fill`).style.width = `${kart.turboCharge}%`;
+  document.getElementById(`${prefix}-pose-pill`).textContent = poseLabel || 'DRIVE';
+}
+
+function showFinishModal(snapshot) {
+  setScreen('finished');
+  const listEl = document.getElementById('finish-standings');
+  listEl.innerHTML = '';
+  const sorted = [...snapshot.karts].sort((a, b) => a.rank - b.rank);
+  for (const k of sorted) {
+    const row = document.createElement('div');
+    row.className = 'standing-row';
+    row.innerHTML = `
+      <strong>${ordinal(k.rank)} — ${k.name}</strong>
+      <span>${k.finishTimeSec ? `${k.finishTimeSec}s` : 'Racing'}</span>
+    `;
+    listEl.appendChild(row);
+  }
+  const p1 = snapshot.karts[0];
+  const st = p1?.statsSummary || { cratesSmashed: 0, turbosUsed: 0, attacksFired: 0, hitsLanded: 0 };
+  document.getElementById('finish-activity').textContent =
+    `Crates Smashed: ${st.cratesSmashed} · Turbos Activated: ${st.turbosUsed} · Punch Attacks: ${st.attacksFired} · Direct Hits: ${st.hitsLanded}`;
+}
+
+document.getElementById('btn-race-again').addEventListener('click', () => {
+  if (state.mode === 'lan') {
+    setScreen('lan_lobby');
+  } else {
+    startLocalRace(state.mode);
+  }
+});
+
+document.getElementById('btn-finish-menu').addEventListener('click', () => {
+  if (state.mode === 'lan') lanClient.leaveRoom();
+  state.sim = null;
+  setScreen('menu');
+});
+
+const isDebug = new URLSearchParams(window.location.search).has('debug');
+const debugPanelEl = document.getElementById('debug-panel');
+if (isDebug) debugPanelEl.classList.remove('hidden');
+
+let lastFrameMs = performance.now();
+let fpsAccum = 0;
+let fpsFrames = 0;
+let lastFpsCheckMs = performance.now();
+
+function animate(nowMs) {
+  requestAnimationFrame(animate);
+
+  const rawDt = (nowMs - lastFrameMs) * 0.001;
+  if (state.screen !== 'racing' && rawDt < (1 / 31)) {
+    return;
+  }
+  lastFrameMs = nowMs;
+  const dt = Math.min(0.05, Math.max(0.001, rawDt));
+
+  fpsAccum += 1 / dt;
+  fpsFrames += 1;
+  if (nowMs - lastFpsCheckMs > 500) {
+    state.fps = Math.round(fpsAccum / Math.max(1, fpsFrames));
+    fpsAccum = 0;
+    fpsFrames = 0;
+    lastFpsCheckMs = nowMs;
+    if (state.screen === 'racing') {
+      renderer.adjustResolutionForFps(state.fps);
+    }
+  }
+
+  const activePoses = state.syntheticPoses || state.latestPoses;
+  const playerCount = state.mode === '2p' ? 2 : 1;
+  const motionInputs = (state.webcamEnabled || state.syntheticPoses)
+    ? motionCtrl.update(activePoses, nowMs, playerCount)
+    : [];
+
+  drawPipOverlay(motionInputs);
+
+  if (state.screen === 'racing') {
+    const p1In = buildCombinedInput(0, motionInputs[0]);
+    const p2In = buildCombinedInput(1, motionInputs[1]);
+
+    if (state.mode === 'lan') {
+      lanClient.sendInput(p1In);
+      if (state.lastSnapshot) {
+        const myId = state.lanPlayerId || state.lastSnapshot.karts[0]?.id;
+        const myKart = state.lastSnapshot.karts.find((k) => k.id === myId) || state.lastSnapshot.karts[0];
+        renderer.render(state.lastSnapshot, { mode: 'lan', focusKartIds: [myKart.id], dt, isMenuShowcase: false });
+        updateHudCard('p1', myKart, state.lastSnapshot.totalLaps, p1In.poseLabel);
+        drawMinimap(state.lastSnapshot);
+      }
+    } else if (state.sim) {
+      const snap = state.sim.step(dt, { p1: p1In, p2: p2In });
+      state.lastSnapshot = snap;
+      handleSimulationEvents(snap.events);
+
+      const countdownEl = document.getElementById('countdown-banner');
+      if (snap.status === 'countdown') {
+        countdownEl.classList.remove('hidden');
+        countdownEl.textContent = Math.ceil(snap.countdown);
+      } else {
+        countdownEl.classList.add('hidden');
+      }
+
+      const focusIds = state.mode === '2p' ? ['p1', 'p2'] : ['p1'];
+      renderer.render(snap, { mode: state.mode, focusKartIds: focusIds, dt, isMenuShowcase: false });
+
+      const k1 = snap.karts.find((k) => k.id === 'p1');
+      updateHudCard('p1', k1, snap.totalLaps, p1In.poseLabel);
+      if (k1) sfx.engineTick(k1.speed / 38);
+
+      if (state.mode === '2p') {
+        const k2 = snap.karts.find((k) => k.id === 'p2');
+        updateHudCard('p2', k2, snap.totalLaps, p2In.poseLabel);
+      } else {
+        drawMinimap(snap);
+      }
+
+      if (snap.status === 'finished') {
+        showFinishModal(snap);
+      }
+    }
+  } else {
+    const snap = menuPreviewSim.step(dt * 0.65, {});
+    renderer.render(snap, { mode: '1p', focusKartIds: ['showcase'], dt, isMenuShowcase: true });
+  }
+
+  if (isDebug) {
+    debugPanelEl.textContent =
+      `FPS: ${state.fps} | Pose: ${state.poseMs.toFixed(1)}ms | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})`;
+  }
+}
+
+requestAnimationFrame(animate);
+
+window.__game = {
+  getMetrics: () => ({
+    fps: state.fps,
+    poseMs: state.poseMs,
+    pixelCount: renderer.pixelCount,
+    maxPixelBudget: 2_200_000,
+    adaptiveScale: renderer.adaptiveScale,
+  }),
+  getState: () => ({
+    screen: state.screen,
+    mode: state.mode,
+    selectedTrackId: state.selectedTrackId,
+    selectedDriverId: state.selectedDriverId,
+    autoGas: state.autoGas,
+    snapshot: state.lastSnapshot,
+  }),
+  startMode: (mode = '1p', trackId = 'island', driverId = 'bandi') => {
+    state.selectedTrackId = trackId;
+    state.selectedDriverId = driverId;
+    startLocalRace(mode);
+    if (state.sim) {
+      state.sim.countdown = 0;
+      state.sim.status = 'racing';
+    }
+    return window.__game.getState();
+  },
+  injectPose: (poseOptsOrArray, playerCount = 1) => {
+    const arr = Array.isArray(poseOptsOrArray)
+      ? poseOptsOrArray.map((p) => (p.landmarks ? p : makeSyntheticPose(p)))
+      : [poseOptsOrArray.landmarks ? poseOptsOrArray : makeSyntheticPose(poseOptsOrArray)];
+    state.syntheticPoses = arr;
+    if (!motionCtrl.slots[0].calibrated || (playerCount === 2 && !motionCtrl.slots[1].calibrated)) {
+      motionCtrl.calibrate(arr, playerCount);
+    }
+    return motionCtrl.update(arr, performance.now(), playerCount);
+  },
+  clearSyntheticPose: () => {
+    state.syntheticPoses = null;
+  },
+  setAutoGas: (v) => {
+    state.autoGas = Boolean(v);
+    motionCtrl.setAutoGas(state.autoGas);
+  },
+};

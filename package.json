@@ -1,0 +1,12 @@
+{
+  "name": "kart-race-turbo",
+  "version": "1.0.0",
+  "description": "3D minimalist multiplayer kart racing game controlled by webcam motions (1P, 2P Split-Screen, Wi-Fi/LAN)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "server": "node server.mjs",
+    "start": "node server.mjs"
+  },
+  "license": "MIT"
+}

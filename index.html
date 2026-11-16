@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Kart Race Turbo!</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="stylesheet" href="./style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./js/vendor/three.module.min.js"
+      }
+    }
+  </script>
+</head>
+<body data-screen="menu">
+  <canvas id="game-canvas" aria-label="3D Kart Race World"></canvas>
+
+  <!-- Split-Screen Center Divider (2P Mode) -->
+  <div id="split-divider" class="hidden" aria-hidden="true"></div>
+
+  <!-- Top Quick Utility Chips -->
+  <header id="top-bar">
+    <div class="top-actions">
+      <button id="btn-auto-gas" class="pill-btn active" type="button" title="Toggle Auto-Gas vs Manual Wheel-Stance">
+        ⚡ Auto-Gas: ON
+      </button>
+      <button id="btn-comfort" class="pill-btn active" type="button" title="Smooth Anti-Nausea Camera">
+        🌀 Comfort
+      </button>
+      <button id="btn-sound" class="pill-btn" type="button" title="Toggle Sound Effects">
+        🔊 SFX
+      </button>
+      <button id="btn-menu-return" class="pill-btn hidden" type="button">
+        🏠 Menu
+      </button>
+    </div>
+  </header>
+
+  <!-- Debug Metrics (?debug) -->
+  <aside id="debug-panel" class="hidden" aria-live="polite"></aside>
+
+  <!-- Live Webcam PiP Widget (Bottom-Left like body-runner & jagoan-kotak) -->
+  <div id="webcam-pip" class="webcam-pip">
+    <video id="webcam-video" playsinline muted></video>
+    <canvas id="webcam-overlay" width="240" height="180"></canvas>
+    <div class="pip-footer">
+      <span id="pip-status">📷 Camera Off</span>
+      <button id="btn-recalibrate" class="pip-mini-btn" type="button">Calibrate</button>
+    </div>
+  </div>
+
+  <!-- Race HUD -->
+  <section id="race-hud" class="modal-layer hidden" aria-live="polite">
+    <div id="countdown-banner" class="countdown-banner hidden">3</div>
+
+    <div class="hud-panels">
+      <!-- Player 1 HUD -->
+      <div id="hud-p1" class="hud-cluster">
+        <div class="pill-row">
+          <div class="hud-pill rank" id="p1-rank">1st</div>
+          <div class="hud-pill" id="p1-lap">LAP 1/3</div>
+          <div class="hud-pill wumpa" id="p1-wumpa">🟠 0/10</div>
+          <div class="hud-pill speed"><span id="p1-speed">0</span> <small>km/h</small></div>
+        </div>
+        <div class="pill-row">
+          <div class="hud-pill item" id="p1-item">📦 No Item</div>
+          <div class="hud-pill gesture" id="p1-pose-pill">DRIVE</div>
+        </div>
+        <div class="energy-bar-wrap">
+          <div class="energy-bar">
+            <div id="p1-turbo-fill" class="energy-fill" style="width:45%"></div>
+            <span class="energy-label">🚀 TURBO <b id="p1-turbo-pct">45%</b> — Raise Both Hands!</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Circuit Mini-Map (Shown in 1P / LAN) -->
+      <div id="minimap-card" class="minimap-card">
+        <canvas id="minimap-canvas" width="124" height="124"></canvas>
+      </div>
+
+      <!-- Player 2 HUD (Shown in 2P Split-Screen) -->
+      <div id="hud-p2" class="hud-cluster hidden">
+        <div class="pill-row">
+          <div class="hud-pill rank" id="p2-rank">2nd</div>
+          <div class="hud-pill" id="p2-lap">LAP 1/3</div>
+          <div class="hud-pill wumpa" id="p2-wumpa">🟠 0/10</div>
+          <div class="hud-pill speed"><span id="p2-speed">0</span> <small>km/h</small></div>
+        </div>
+        <div class="pill-row">
+          <div class="hud-pill item" id="p2-item">📦 No Item</div>
+          <div class="hud-pill gesture" id="p2-pose-pill">DRIVE</div>
+        </div>
+        <div class="energy-bar-wrap">
+          <div class="energy-bar">
+            <div id="p2-turbo-fill" class="energy-fill" style="width:45%"></div>
+            <span class="energy-label">🚀 P2 TURBO <b id="p2-turbo-pct">45%</b></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Touch / Quick Action Buttons -->
+    <div id="touch-controls" class="touch-controls">
+      <div class="touch-pad">
+        <button type="button" class="touch-btn" data-touch="left">◀</button>
+        <button type="button" class="touch-btn" data-touch="brake">🛑</button>
+        <button type="button" class="touch-btn" data-touch="right">▶</button>
+      </div>
+      <div class="touch-pad">
+        <button type="button" class="touch-btn accent-turbo" data-touch="turbo">🚀 TURBO</button>
+        <button type="button" class="touch-btn accent-attack" data-touch="attack">💥 PUNCH</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Showcase Main Menu (Left-docked panel like jagoan-kotak so the 3D kart shines on the right!) -->
+  <main id="menu-modal" class="menu-showcase">
+    <div class="menu-panel">
+      <div class="comic-logo" aria-label="Kart Race Turbo">
+        <span class="l1">KART RACE</span>
+        <span class="l2">TURBO!</span>
+      </div>
+      <p class="menu-tagline">
+        3D webcam motion kart racer — <b>tilt your hands</b> to steer, <b>raise both hands</b> for Turbo, and <b>punch forward</b> to fire crate weapons!
+      </p>
+
+      <!-- Circuit & Driver Pickers -->
+      <div class="picker-section">
+        <div class="picker-title">🏝️ Circuit</div>
+        <div id="track-list" class="choice-row"></div>
+      </div>
+
+      <div class="picker-section">
+        <div class="picker-title">🏎️ Faceless Racer</div>
+        <div id="driver-list" class="choice-row"></div>
+      </div>
+
+      <!-- Big Tactile Play Buttons -->
+      <div class="mode-stack">
+        <button id="btn-mode-1p" class="btn-3d orange-btn" type="button">
+          <span class="btn-ico">🏁</span>
+          <span class="btn-txt">
+            <strong>Single Player Race</strong>
+            <small>1 Player vs 3 AI Karts (Webcam or Keyboard)</small>
+          </span>
+        </button>
+
+        <div class="mode-split-row">
+          <button id="btn-mode-2p" class="btn-3d green-btn" type="button">
+            <span class="btn-ico">👥</span>
+            <span class="btn-txt">
+              <strong>2 Players (1 Device)</strong>
+              <small>Split-Screen · 1 Webcam or Keys</small>
+            </span>
+          </button>
+
+          <button id="btn-mode-lan" class="btn-3d blue-btn" type="button">
+            <span class="btn-ico">📡</span>
+            <span class="btn-txt">
+              <strong>Wi-Fi / LAN</strong>
+              <small>Same Network Multiplayer</small>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Compact Visual Motion Strip -->
+      <ul class="moves-strip">
+        <li><i>🙌</i><b>Steer</b><span>Tilt wheel / lean</span></li>
+        <li><i>🙇</i><b>Brake</b><span>Pull hands / crouch</span></li>
+        <li><i>🚀</i><b>Turbo</b><span>Both hands up!</span></li>
+        <li><i>👊</i><b>Attack</b><span>Punch forward!</span></li>
+      </ul>
+    </div>
+  </main>
+
+  <!-- Webcam Calibration Modal -->
+  <section id="calib-modal" class="overlay-modal hidden" aria-labelledby="calib-title">
+    <div class="cream-card compact-card">
+      <h2 id="calib-title">📷 Motion Calibration</h2>
+      <p id="calib-desc" class="card-lead">
+        Stand or sit so your shoulders and hands are visible, then hold an invisible steering wheel!
+      </p>
+      <div class="calib-status-box">
+        <div id="calib-timer" class="calib-timer">Ready</div>
+        <p id="calib-hint">In 2-Player mode: Player 1 stands on the LEFT, Player 2 on the RIGHT.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-start-cam" class="btn-3d orange-btn" type="button">
+          <span class="btn-ico">📷</span>
+          <span class="btn-txt"><strong>Enable Camera & Calibrate (3s)</strong></span>
+        </button>
+        <button id="btn-skip-cam" class="btn-soft" type="button">
+          ⌨️ Play Without Camera (Keyboard / Touch)
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Wi-Fi / LAN Multiplayer Lobby Modal -->
+  <section id="lan-modal" class="overlay-modal hidden" aria-labelledby="lan-title">
+    <div class="cream-card wide-card">
+      <div class="lan-header">
+        <h2 id="lan-title">📡 Wi-Fi / LAN Multiplayer</h2>
+        <button id="btn-lan-back" class="btn-soft small-btn" type="button">← Back</button>
+      </div>
+
+      <div id="lan-url-banner" class="lan-banner">
+        Other devices on the same Wi-Fi can open: <strong id="lan-url-text">http://localhost:3080</strong>
+      </div>
+      <div id="lan-error" class="lan-error hidden"></div>
+
+      <!-- Pre-Room View -->
+      <div id="lan-join-view" class="lan-columns">
+        <div class="lan-box">
+          <h3>Host or Join by Code</h3>
+          <label class="field-label" for="lan-player-name">Your Racer Name</label>
+          <input id="lan-player-name" class="text-input" type="text" maxlength="16" value="Racer 1" />
+
+          <button id="btn-lan-create" class="btn-3d orange-btn" type="button">
+            <span class="btn-ico">➕</span>
+            <span class="btn-txt"><strong>Create Wi-Fi Room</strong></span>
+          </button>
+
+          <div class="join-code-row">
+            <input id="lan-room-code" class="text-input code-input" type="text" maxlength="4" placeholder="CODE" aria-label="4-letter Room Code" />
+            <button id="btn-lan-join" class="btn-3d blue-btn" type="button">
+              <span class="btn-txt"><strong>Join Code</strong></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="lan-box">
+          <div class="lan-list-header">
+            <h3>Active Rooms on Wi-Fi</h3>
+            <button id="btn-lan-refresh" class="pip-mini-btn" type="button">↻ Refresh</button>
+          </div>
+          <div id="lan-rooms-list" class="lan-rooms-list">
+            <p class="muted-note">No active rooms yet — click "Create Wi-Fi Room" to start one!</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inside Room View -->
+      <div id="lan-room-view" class="lan-room-view hidden">
+        <div class="room-code-banner">
+          <span>ROOM CODE:</span>
+          <strong id="room-code-display">KART</strong>
+          <span id="room-track-display" class="track-tag">N. Sanity Island</span>
+        </div>
+        <h3>Connected Racers (Remaining slots filled by AI Bots):</h3>
+        <div id="room-players-list" class="room-players-list"></div>
+        <div class="modal-actions">
+          <button id="btn-lan-start" class="btn-3d green-btn" type="button">
+            <span class="btn-ico">🏁</span>
+            <span class="btn-txt"><strong>Start LAN Race Now!</strong></span>
+          </button>
+          <button id="btn-lan-camera" class="btn-soft" type="button">📷 Calibrate My Webcam</button>
+          <button id="btn-lan-leave" class="btn-soft danger-soft" type="button">Leave Room</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Finish / Podium Modal -->
+  <section id="finish-modal" class="overlay-modal hidden" aria-labelledby="finish-title">
+    <div class="cream-card compact-card">
+      <div class="trophy-stars">⭐⭐⭐</div>
+      <h2 id="finish-title">🏆 Podium Standings</h2>
+      <div id="finish-standings" class="standings-list"></div>
+      <div id="finish-activity" class="activity-summary"></div>
+      <div class="modal-actions">
+        <button id="btn-race-again" class="btn-3d orange-btn" type="button">
+          <span class="btn-ico">🔄</span>
+          <span class="btn-txt"><strong>Race Again!</strong></span>
+        </button>
+        <button id="btn-finish-menu" class="btn-soft" type="button">🏠 Main Menu</button>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
