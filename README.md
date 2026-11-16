@@ -1,6 +1,6 @@
 # Kart Race Turbo 🏎️💨
 
-A 3D minimalist multiplayer kart racing game inspired by classic arcade kart racers, controlled by **webcam body motions** (plus keyboard, gamepad, and touch fallback).
+A 3D minimalist multiplayer kart racing game inspired by classic arcade kart racers, controlled by **webcam body motions** (plus keyboard and touch fallback; there is no gamepad support).
 
 ## Game Modes
 
@@ -17,6 +17,16 @@ A 3D minimalist multiplayer kart racing game inspired by classic arcade kart rac
 | **Pull both hands to chest / Crouch** | Brake (hold to Reverse) | `S` | `↓` |
 | **Raise both hands overhead (or hop)** | Fire Turbo Boost | `Space` | `Right Shift` |
 | **Punch forward with either hand** | Fire Crate Weapon (Rocket, Bomb, TNT, Shield) | `F` / `E` | `Enter` / `K` |
+
+### Other keys and touch
+
+- `Esc` or `P` pauses a local race (Resume / Restart / Main Menu). The Menu button also pauses first. Pausing is not available in Wi-Fi/LAN races.
+- On touch devices the on-screen buttons are Left / Brake / Right, TURBO and PUNCH (PUNCH fires the held item).
+- Comfort mode (top bar) calms the camera: slower follow, smaller field-of-view change, no shake.
+
+## Racers
+
+Each racer has different numbers in `js/tracks.js` that the simulation really uses: **Rufus Dash** (balanced), **Jet Mint** (highest top speed, slow acceleration, loses more speed in tight bends), **Maka Tiki** (best handling: keeps its speed through bends), **Neo Volt** (fastest acceleration: recovers quickest from hits and bends). The menu shows the three bars for the picked racer. In 2-player mode Player 2 gets a different racer than Player 1.
 
 ## Running Locally & on Wi-Fi / LAN
 

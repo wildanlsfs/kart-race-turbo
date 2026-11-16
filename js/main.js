@@ -36,6 +36,7 @@ const state = {
   lanPlayerId: null,
   lanPrev: null,
   lanCurr: null,
+  paused: false,
 };
 
 const canvas = document.getElementById('game-canvas');
@@ -215,11 +216,32 @@ const isTouchDevice = (window.matchMedia && window.matchMedia('(pointer: coarse)
 if (isTouchDevice) document.body.classList.add('touch');
 window.addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true, passive: true });
 
-btnMenuReturn.addEventListener('click', () => {
+const pauseModalEl = document.getElementById('pause-modal');
+function setPaused(v) {
+  state.paused = Boolean(v) && state.screen === 'racing' && state.mode !== 'lan' && Boolean(state.sim);
+  pauseModalEl.classList.toggle('hidden', !state.paused);
+  if (state.paused) { touchHeld.clear(); keys.clear(); }
+}
+function leaveToMenu() {
   if (state.mode === 'lan') lanClient.leaveRoom();
   state.sim = null;
+  setPaused(false);
   setScreen('menu');
+}
+// In a local race the Menu button pauses first (a stray tap must not throw the race away).
+btnMenuReturn.addEventListener('click', () => {
+  if (state.screen === 'racing' && state.mode !== 'lan' && state.sim && state.sim.status !== 'finished') setPaused(true);
+  else leaveToMenu();
 });
+document.getElementById('btn-pause-resume').addEventListener('click', () => setPaused(false));
+document.getElementById('btn-pause-restart').addEventListener('click', () => { setPaused(false); startLocalRace(state.mode); });
+document.getElementById('btn-pause-menu').addEventListener('click', leaveToMenu);
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' || e.code === 'KeyP') {
+    if (state.screen === 'racing' && state.mode !== 'lan') setPaused(!state.paused);
+  }
+});
+window.addEventListener('blur', () => { keys.clear(); touchHeld.clear(); if (state.screen === 'racing' && state.mode !== 'lan') setPaused(true); });
 
 // Webcam & Pose Worker Setup (with Main-Thread fallback matching jagoan-kotak/js/main.js)
 const videoEl = document.getElementById('webcam-video');
@@ -626,6 +648,8 @@ function startLocalRace(mode) {
   });
   renderer.camStates[0].initialized = false;
   renderer.camStates[1].initialized = false;
+  state.paused = false;
+  pauseModalEl.classList.add('hidden');
   setScreen('racing');
 }
 
@@ -678,7 +702,7 @@ const lanClient = new LanClient({
       row.className = 'room-item';
       row.innerHTML = `
         <strong>${p.name} ${p.id === room.hostId ? '👑 (Host)' : ''} ${p.id === myPlayerId ? '(You)' : ''}</strong>
-        <span>${p.driverId.toUpperCase()}</span>
+        <span>${(DRIVERS.find((d) => d.id === p.driverId) || {}).name || p.driverId}</span>
       `;
       roomPlayersListEl.appendChild(row);
     }
@@ -847,10 +871,14 @@ function handleSimulationEvents(events, totalLaps = 3) {
   const solo = mine.size === 1; // in split-screen, banners would be ambiguous
   for (const ev of events) {
     const isMine = mine.has(ev.kartId);
-    if (ev.type === 'countdown') sfx.countdown(ev.count);
+    if (ev.type === 'countdown') {
+      sfx.countdown(ev.count);
+      if (ev.count === 0) showBanner('GO!', 'lap', 700);
+    } else if (ev.type === 'closing') showBanner(`Race ends in ${ev.secs} s`, 'bad', 1800);
+    else if (ev.type === 'reset' && isMine && solo) showBanner('Back on the road', 'good', 1100);
     else if (ev.type === 'crate_smash') {
       if (isMine || !solo) sfx.crateSmash();
-      if (isMine && solo && ev.item) showBanner(`${ITEM_LABELS[ev.item]} — punch to use!`, 'item', 1500);
+      if (isMine && solo && ev.item) showBanner(`${ITEM_LABELS[ev.item]} — ${useHint('p1')} to use`, 'item', 1500);
       renderer.spawnBurst(ev.x, 1, ev.z, '#ffb84d', 0.9);
     } else if (ev.type === 'fruit_pickup') { if (isMine) sfx.fruitPickup(); }
     else if (ev.type === 'turbo' || ev.type === 'pad_boost') { if (isMine) sfx.turbo(); }
@@ -909,12 +937,19 @@ function interpolateLanSnapshot(nowMs) {
   return { ...cur.snap, karts };
 }
 
+// What to press to fire the held item, for the input device actually in use.
+function useHint(prefix) {
+  if (prefix === 'p2') return 'Enter / punch';
+  if (document.body.classList.contains('touch')) return 'tap PUNCH';
+  return state.webcamEnabled ? 'punch / F' : 'press F';
+}
+
 function updateHudCard(prefix, kart, totalLaps, poseLabel) {
   if (!kart) return;
   document.getElementById(`${prefix}-rank`).textContent = ordinal(kart.rank);
   document.getElementById(`${prefix}-lap`).textContent = `LAP ${kart.lap}/${totalLaps}`;
   document.getElementById(`${prefix}-mango`).textContent = `🟠 ${kart.mango}/10`;
-  document.getElementById(`${prefix}-item`).textContent = kart.heldItem ? `${ITEM_LABELS[kart.heldItem]} (Punch!)` : '📦 No Item';
+  document.getElementById(`${prefix}-item`).textContent = kart.heldItem ? `${ITEM_LABELS[kart.heldItem]} (${useHint(prefix)})` : '📦 No Item';
   document.getElementById(`${prefix}-speed`).textContent = Math.max(0, Math.round(kart.speed * 3.2));
   document.getElementById(`${prefix}-turbo-pct`).textContent = `${kart.turboCharge}%`;
   document.getElementById(`${prefix}-turbo-fill`).style.width = `${kart.turboCharge}%`;
@@ -930,7 +965,7 @@ function showFinishModal(snapshot) {
   for (const k of sorted) {
     const row = document.createElement('div');
     row.className = `standing-row${mine.has(k.id) ? ' me' : ''}`;
-    const t = k.finishTimeSec ? `${k.finishTimeSec.toFixed(1)}s` : 'still racing';
+    const t = k.finishTimeSec ? `${k.finishTimeSec.toFixed(1)}s` : 'did not finish';
     row.innerHTML = `<strong>${ordinal(k.rank)} — ${k.name}${mine.has(k.id) ? ' (you)' : ''}</strong><span>${t}</span>`;
     listEl.appendChild(row);
   }
@@ -950,11 +985,7 @@ document.getElementById('btn-race-again').addEventListener('click', () => {
   }
 });
 
-document.getElementById('btn-finish-menu').addEventListener('click', () => {
-  if (state.mode === 'lan') lanClient.leaveRoom();
-  state.sim = null;
-  setScreen('menu');
-});
+document.getElementById('btn-finish-menu').addEventListener('click', leaveToMenu);
 
 const isDebug = new URLSearchParams(window.location.search).has('debug');
 const debugPanelEl = document.getElementById('debug-panel');
@@ -1019,9 +1050,9 @@ function animate(nowMs) {
         drawMinimap(snap);
       }
     } else if (state.sim) {
-      const snap = state.sim.step(dt, { p1: p1In, p2: p2In });
+      const snap = state.paused ? (state.lastSnapshot || state.sim.getSnapshot()) : state.sim.step(dt, { p1: p1In, p2: p2In });
       state.lastSnapshot = snap;
-      handleSimulationEvents(snap.events, snap.totalLaps);
+      if (!state.paused) handleSimulationEvents(snap.events, snap.totalLaps);
 
       const countdownEl = document.getElementById('countdown-banner');
       if (snap.status === 'countdown') {
@@ -1036,7 +1067,7 @@ function animate(nowMs) {
 
       const k1 = snap.karts.find((k) => k.id === 'p1');
       updateHudCard('p1', k1, snap.totalLaps, p1In.poseLabel);
-      if (k1) sfx.engineTick(k1.speed / 38);
+      if (k1 && !state.paused) sfx.engineTick(k1.speed / 38);
 
       if (state.mode === '2p') {
         const k2 = snap.karts.find((k) => k.id === 'p2');
@@ -1045,7 +1076,7 @@ function animate(nowMs) {
         drawMinimap(snap);
       }
 
-      if (snap.status === 'finished') {
+      if (snap.status === 'finished' && !state.paused) {
         showFinishModal(snap);
       }
     }
@@ -1077,6 +1108,8 @@ window.__game = {
     selectedDriverId: state.selectedDriverId,
     autoGas: state.autoGas,
     snapshot: state.lastSnapshot,
+    paused: state.paused,
+    meshDrivers: Object.fromEntries([...renderer.kartMeshes].map(([id, m]) => [id, m.driverId])),
   }),
   startMode: (mode = '1p', trackId = 'island', driverId = 'rufus') => {
     state.selectedTrackId = trackId;
