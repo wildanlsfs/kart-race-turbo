@@ -59,6 +59,7 @@ function createSlotState() {
     shoulderWidth: 0.18,
     lastSeenMs: -9999,
     lastSteer: 0,
+    lastEvalSec: null,
     lastThrottle: 0,
     brakeStartMs: null,
     lastPunchMs: -9999,
@@ -367,19 +368,24 @@ export class MotionController {
 
     // 4. STEERING (Mirrored camera):
     // Balanced for comfortable webcam play with 12% deadzone, S-curve response, and adaptive neutral center
-    if (!attack && !crouched && Math.abs(slot.neutralX - shMidX) < sw * 0.14) {
-      slot.neutralX += (shMidX - slot.neutralX) * 0.015;
+    // Only drift the neutral point while the player is clearly NOT steering (previous steer ~0),
+    // and slowly, so holding a lean through a long corner does not fade the steering away.
+    const dtAdapt = Math.min(0.1, Math.max(0.001, slot.lastEvalSec == null ? 0.033 : tSec - slot.lastEvalSec));
+    if (!attack && !crouched && Math.abs(slot.lastSteer) < 0.05 && Math.abs(slot.neutralX - shMidX) < sw * 0.10) {
+      const k = Math.min(1, 0.25 * dtAdapt);
+      slot.neutralX += (shMidX - slot.neutralX) * k;
       if (nose) {
-        slot.neutralNoseX = (slot.neutralNoseX ?? slot.neutralX) + (nose.x - (slot.neutralNoseX ?? slot.neutralX)) * 0.015;
+        slot.neutralNoseX = (slot.neutralNoseX ?? slot.neutralX) + (nose.x - (slot.neutralNoseX ?? slot.neutralX)) * k;
       }
     }
+    slot.lastEvalSec = tSec;
 
     // (a) Upper-body displacement relative to calibrated neutralX
-    const shoulderShiftRight = clamp((slot.neutralX - shMidX) / (sw * 0.30), -1, 1);
+    const shoulderShiftRight = clamp((slot.neutralX - shMidX) / (sw * 0.36), -1, 1);
 
     // (b) Head shift relative to calibrated neutralNoseX
     const headShiftRight = nose
-      ? clamp(((slot.neutralNoseX ?? slot.neutralX) - nose.x) / (sw * 0.34), -1, 1)
+      ? clamp(((slot.neutralNoseX ?? slot.neutralX) - nose.x) / (sw * 0.40), -1, 1)
       : shoulderShiftRight;
 
     // (c) Torso lean relative to hips (if hips are visible and didn't just move identically with shoulders)
@@ -392,7 +398,7 @@ export class MotionController {
     const upperLean = Math.abs(shoulderShiftRight) >= Math.abs(torsoLeanRight)
       ? shoulderShiftRight
       : torsoLeanRight;
-    const bodyLeanRight = clamp(upperLean * 0.55 + headShiftRight * 0.30 + shoulderTiltRight * 0.35, -1, 1);
+    const bodyLeanRight = clamp(upperLean * 0.62 + headShiftRight * 0.25 + shoulderTiltRight * 0.25, -1, 1);
 
     // (e) Invisible steering wheel hand tilt (turning right moves left hand UP / smaller y, right hand DOWN / larger y)
     let wheelTiltRight = 0;
@@ -401,20 +407,20 @@ export class MotionController {
       rw.y > shMidY - sw * 0.45 && rw.y < shMidY + sw * 1.05;
 
     if (handsInWheelZone) {
-      wheelTiltRight = clamp((rw.y - lw.y) / (sw * 0.42), -1, 1);
+      wheelTiltRight = clamp((rw.y - lw.y) / (sw * 0.50), -1, 1);
     }
 
     const rawSteer = attack
       ? 0
-      : clamp(bodyLeanRight + wheelTiltRight * 0.85, -1, 1);
+      : clamp(bodyLeanRight + wheelTiltRight * 0.80, -1, 1);
 
-    const deadzone = 0.12;
+    const deadzone = 0.10;
     const dzSteer = Math.abs(rawSteer) < deadzone
       ? 0
       : Math.sign(rawSteer) * ((Math.abs(rawSteer) - deadzone) / (1 - deadzone));
     const curvedSteer = dzSteer === 0
       ? 0
-      : Math.sign(dzSteer) * Math.pow(Math.abs(dzSteer), 1.35);
+      : Math.sign(dzSteer) * Math.pow(Math.abs(dzSteer), 1.5);
 
     const filteredSteer = slot.steerFilter.filter(curvedSteer, tSec);
     const steer = Math.abs(filteredSteer) < 0.01 ? 0 : clamp(filteredSteer, -1, 1);
