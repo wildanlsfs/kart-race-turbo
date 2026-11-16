@@ -80,7 +80,7 @@ export class RaceSimulation {
         checkpoint: 0, // must visit 1 -> 2 -> 3 before crossing 0 increments lap
         trackS: 0.985,
         totalProgress: 0,
-        rank: idx + 1,
+        rank: slotOf.get(p) + 1,
         mango: 0,
         turboCharge: 45, // start with 45% turbo so players can test boost early
         turboActiveTimer: 0,

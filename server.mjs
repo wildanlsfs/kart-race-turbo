@@ -326,7 +326,9 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
           leaveCurrentRoom();
           const used = new Set(room.players.map((p) => p.driverId));
           const fallbackDriver = DRIVERS.find((d) => !used.has(d.id))?.id || 'jet';
-          const driverId = DRIVERS.some((d) => d.id === msg.driverId) ? msg.driverId : fallbackDriver;
+          const wanted = DRIVERS.some((d) => d.id === msg.driverId) ? msg.driverId : fallbackDriver;
+          // two racers must not share a driver (identical karts are indistinguishable)
+          const driverId = used.has(wanted) ? fallbackDriver : wanted;
 
           room.players.push({
             id: clientId,

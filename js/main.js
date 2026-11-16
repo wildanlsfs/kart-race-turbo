@@ -529,11 +529,15 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
   let lastBeepSec = 4;
   calibTimerEl.textContent = 'Look at Camera 👀';
 
+  let waitedSec = 0;
   calibInterval = setInterval(() => {
     const poses = state.syntheticPoses || state.latestPoses;
     if (poses.length === 0) {
+      waitedSec += 0.2;
       calibTimerEl.textContent = 'Step Into View 👀';
-      calibHintEl.textContent = 'Make sure your head and shoulders are visible in the camera box (bottom-right).';
+      calibHintEl.textContent = waitedSec > 8
+        ? 'Still nobody detected. Check lighting and that your shoulders are in frame, or press "Play Without Camera" below.'
+        : 'Make sure your head and shoulders are visible in the camera box (bottom-right).';
       return;
     }
 
