@@ -6,7 +6,7 @@
 self.module = { exports: {} };
 self.exports = self.module.exports;
 
-const LOCAL_BASE = '/js/vendor/mediapipe';
+const LOCAL_BASE = new URL('./vendor/mediapipe', self.location.href).href;
 const CDN_BASE = 'https://unpkg.com/@mediapipe/tasks-vision@0.10.14';
 const MODEL_CDN = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 

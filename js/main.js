@@ -253,12 +253,12 @@ function initPoseWorker() {
 async function initMainThreadLandmarker() {
   const visionMod = await import('./vendor/mediapipe/vision_bundle.mjs');
   const { FilesetResolver, PoseLandmarker } = visionMod;
-  const files = await FilesetResolver.forVisionTasks('/js/vendor/mediapipe/wasm');
+  const files = await FilesetResolver.forVisionTasks(new URL('./vendor/mediapipe/wasm', import.meta.url).href);
   for (const delegate of ['GPU', 'CPU']) {
     try {
       return await PoseLandmarker.createFromOptions(files, {
         baseOptions: {
-          modelAssetPath: '/js/vendor/mediapipe/pose_landmarker_lite.task',
+          modelAssetPath: new URL('./vendor/mediapipe/pose_landmarker_lite.task', import.meta.url).href,
           delegate,
         },
         runningMode: 'VIDEO',
