@@ -778,6 +778,7 @@ export class RaceRenderer {
       wasAir: false,
       squash: 0,
     };
+    entry.driverId = kartState.driverId;
     this.kartMeshes.set(kartState.id, entry);
     return entry;
   }
@@ -824,17 +825,21 @@ export class RaceRenderer {
     if (isMenuShowcase) {
       // Showcase camera angle on Menu: close angled 3/4 view showing kart on the right half of screen
       this.menuOrbitAngle += dt * 0.35;
+      // On small landscape phones the menu panel covers more of the screen, so push the kart further right.
+      const narrow = (this.canvas.clientWidth || window.innerWidth) < 900;
+      const side = narrow ? 10 : 3.3;
+      const lookY = narrow ? 0.4 : 1.05;
       const viewYaw = kart.heading + 0.38 + Math.sin(this.menuOrbitAngle) * 0.18;
-      const dist = 6.8;
+      const dist = narrow ? 9.5 : 6.8;
       cam.position.set(
         kart.x - Math.sin(viewYaw) * dist + Math.cos(kart.heading) * 1.2,
         kart.y + 2.65,
         kart.z - Math.cos(viewYaw) * dist - Math.sin(kart.heading) * 1.2
       );
       cam.lookAt(
-        kart.x + Math.sin(kart.heading) * 1.4 + Math.cos(kart.heading) * 3.3,
-        kart.y + 1.05,
-        kart.z + Math.cos(kart.heading) * 1.4 - Math.sin(kart.heading) * 3.3
+        kart.x + Math.sin(kart.heading) * 1.4 + Math.cos(kart.heading) * side,
+        kart.y + lookY,
+        kart.z + Math.cos(kart.heading) * 1.4 - Math.sin(kart.heading) * side
       );
       return;
     }
@@ -887,6 +892,15 @@ export class RaceRenderer {
     this._updateBursts(dt);
     if (this.padTex) this.padTex.offset.y = -((nowSec * 1.6) % 1);
 
+    // A kart mesh is tied to its driver look: drop meshes whose driver changed (new race, new
+    // pick) or whose kart is no longer in the snapshot, so the chosen racer is what you see.
+    const liveKarts = new Map(snapshot.karts.map((k) => [k.id, k.driverId]));
+    for (const [id, m] of this.kartMeshes.entries()) {
+      if (liveKarts.get(id) !== m.driverId) {
+        m.root.parent?.remove(m.root);
+        this.kartMeshes.delete(id);
+      }
+    }
     for (const k of snapshot.karts) {
       const m = this.kartMeshes.get(k.id) || this._createFacelessKartMesh(k);
       m.root.position.set(k.x, 0, k.z);

@@ -109,7 +109,11 @@ function renderSelectors() {
   for (const d of DRIVERS) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `choice-card ${d.id === state.selectedDriverId ? 'selected' : ''}`;
+    const selected = d.id === state.selectedDriverId;
+    btn.className = `choice-card ${selected ? 'selected' : ''}`;
+    btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    btn.dataset.driver = d.id;
+    btn.style.setProperty('--pick', d.color);
     btn.innerHTML = `
       <strong><span class="swatch-dot" style="background:${d.color}"></span>${d.name}</strong>
       <small>${d.role}</small>
@@ -121,6 +125,27 @@ function renderSelectors() {
     });
     driverListEl.appendChild(btn);
   }
+  renderDriverDetail();
+}
+
+// Stat bars for the picked driver. Bars are normalised over the roster, so they show the same
+// numbers the simulation uses (topSpeed, accel, handling in tracks.js).
+function statPct(key, value) {
+  const vals = DRIVERS.map((d) => d.stats[key]);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  return Math.round(30 + ((value - lo) / Math.max(1e-6, hi - lo)) * 70);
+}
+
+function renderDriverDetail() {
+  const el = document.getElementById('driver-detail');
+  if (!el) return;
+  const d = DRIVERS.find((x) => x.id === state.selectedDriverId) || DRIVERS[0];
+  const other = DRIVERS.find((x) => x.id !== d.id);
+  const bar = (label, key) => `<span class="stat"><i>${label}</i><b><u style="width:${statPct(key, d.stats[key])}%"></u></b></span>`;
+  el.innerHTML = `<strong style="color:${d.color}">${d.name}</strong> <em>${d.role}</em>`
+    + bar('Speed', 'topSpeed') + bar('Accel', 'accel') + bar('Grip', 'handling')
+    + `<small>2P: Player 2 drives ${other ? other.name : '-'}</small>`;
 }
 renderSelectors();
 

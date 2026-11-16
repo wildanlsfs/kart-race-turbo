@@ -21,7 +21,7 @@ export const DRIVERS = [
     kartColor: '#10b981',
     accent: '#a3e635',
     headgear: 'helmet', // Aero racing helmet (faceless)
-    stats: { topSpeed: 30, accel: 23, handling: 3.8, boostBonus: 12.5 },
+    stats: { topSpeed: 30.5, accel: 20, handling: 3.7, boostBonus: 12.5 },
   },
   {
     id: 'maka',
@@ -32,7 +32,7 @@ export const DRIVERS = [
     kartColor: '#f59e0b',
     accent: '#ef4444',
     headgear: 'crown', // Wooden tiki feathers (faceless)
-    stats: { topSpeed: 28, accel: 27, handling: 4.4, boostBonus: 12 },
+    stats: { topSpeed: 28.8, accel: 26, handling: 4.7, boostBonus: 12 },
   },
   {
     id: 'volt',
@@ -43,7 +43,7 @@ export const DRIVERS = [
     kartColor: '#8b5cf6',
     accent: '#38bdf8',
     headgear: 'visor', // Tech dome visor (faceless)
-    stats: { topSpeed: 28.5, accel: 29, handling: 4.15, boostBonus: 12 },
+    stats: { topSpeed: 28.5, accel: 36, handling: 4.0, boostBonus: 12 },
   },
 ];
 

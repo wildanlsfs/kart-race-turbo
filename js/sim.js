@@ -14,6 +14,13 @@ function wrapAngle(a) {
   return a;
 }
 
+const SPIN_TIME = 0.9;
+const GRIP_REF = 4.0; // handling value of the balanced driver
+const CORNER_DRAG = 0.014; // speed scrubbed per unit of lateral acceleration (balanced driver)
+const CLOSE_AFTER = 60; // seconds the race stays open after the first kart finishes
+const STUCK_WINDOW = 3.0; // seconds without progress before the safety net resets a kart
+const STUCK_MIN_PROGRESS = 0.008; // lap fraction (about 4 m) that counts as moving
+
 export class RaceSimulation {
   constructor({ trackId = 'island', mode = '1p', players = [], totalLaps = 3, fillAI = true } = {}) {
     this.track = getTrackById(trackId);
@@ -98,6 +105,11 @@ export class RaceSimulation {
         aiItemTimer: 0,
         invulnTimer: 0,
         wallCooldown: 0,
+        resets: 0,
+        stuckT: 0,
+        stuckMark: 0,
+        wantsGo: true,
+        spinBase: 0,
         statsSummary: { cratesSmashed: 0, turbosUsed: 0, attacksFired: 0, hitsLanded: 0 },
       };
     });
@@ -117,6 +129,7 @@ export class RaceSimulation {
     this.projectiles = [];
     this.hazards = [];
     this.finishDelay = 0;
+    this.closeTimer = 0;
   }
 
   _findNearestSample(x, z) {
@@ -249,10 +262,10 @@ export class RaceSimulation {
       x: kart.x + fwdX * 2.5,
       y: 0.7,
       z: kart.z + fwdZ * 2.5,
-      vx: fwdX * (item === 'rocket' ? 52 : 46),
-      vz: fwdZ * (item === 'rocket' ? 52 : 46),
+      vx: fwdX * (item === 'rocket' ? 52 : 44),
+      vz: fwdZ * (item === 'rocket' ? 52 : 44),
       heading: kart.heading,
-      ttl: 4.5,
+      ttl: item === 'rocket' ? 4.5 : 6.0,
     });
   }
 
@@ -305,9 +318,11 @@ export class RaceSimulation {
       if (kart.padBoostTimer > 0) kart.padBoostTimer = Math.max(0, kart.padBoostTimer - dt);
 
       if (kart.spinOutTimer > 0) {
+        // Two full turns over SPIN_TIME that end exactly on the original heading (so the kart
+        // never comes out of a spin facing the wrong way), while it keeps rolling forward.
         kart.spinOutTimer = Math.max(0, kart.spinOutTimer - dt);
-        kart.speed *= Math.max(0, 1 - 4.0 * dt);
-        kart.heading = wrapAngle(kart.heading + 11.0 * dt);
+        kart.speed *= Math.max(0, 1 - 1.4 * dt);
+        kart.heading = wrapAngle(kart.spinBase + (1 - kart.spinOutTimer / SPIN_TIME) * Math.PI * 4);
       } else {
         // Hop / ramp jump
         if (rawInput.hop && kart.y <= 0.01) {
@@ -338,7 +353,7 @@ export class RaceSimulation {
         const boostBonus = (kart.turboActiveTimer > 0 ? kart.driver.stats.boostBonus : 0) + (kart.padBoostTimer > 0 ? 11 : 0);
         const effectiveTopSpeed = (kart.baseTopSpeed + mangoBonus + boostBonus) * (offRoad && kart.turboActiveTimer <= 0 ? 0.72 : 1.0);
 
-        const topScale = (kart.isAI || kart.finished) ? kart.aiPace : 1;
+        const topScale = kart.finished ? 0.7 : (kart.isAI ? kart.aiPace : 1);
         const topSpeed = effectiveTopSpeed * topScale;
         if (rawInput.reverse && kart.speed <= 1.5) {
           // Reverse only once nearly stopped; before that "reverse" is just a brake.
@@ -346,8 +361,11 @@ export class RaceSimulation {
         } else if (rawInput.reverse || rawInput.brake) {
           kart.speed = kart.speed > 0 ? Math.max(0, kart.speed - 38 * dt) : Math.min(0, kart.speed + 30 * dt);
         } else if (rawInput.throttle > 0 || kart.turboActiveTimer > 0 || kart.padBoostTimer > 0) {
+          // Acceleration tapers off near top speed, so a driver with strong acceleration gets back
+          // to speed quicker after a hit, a wall scrape or a tight bend.
           const accel = kart.driver.stats.accel + (kart.turboActiveTimer > 0 ? 22 : 0);
-          kart.speed = Math.min(topSpeed, kart.speed + accel * dt);
+          const taper = 0.35 + 0.65 * clamp(1 - Math.max(0, kart.speed) / Math.max(1, topSpeed), 0, 1);
+          kart.speed = Math.min(topSpeed, kart.speed + accel * taper * dt);
         } else {
           // Natural coasting drag
           kart.speed *= Math.max(0, 1 - 1.8 * dt);
@@ -358,6 +376,7 @@ export class RaceSimulation {
 
         // Steering: real turning proportional to input, plus a light road assist that
         // self-centres when hands are neutral and nudges away from the barrier.
+        const headBefore = kart.heading;
         const steerInput = clamp(rawInput.steer || 0, -1, 1);
         kart.steerAngle = steerInput;
         const speedFactor = Math.min(1, Math.abs(kart.speed) / 8 + 0.25);
@@ -397,6 +416,15 @@ export class RaceSimulation {
             const fixed = trackHeading - latSign * allowed;
             kart.heading = wrapAngle(kart.heading + wrapAngle(fixed - kart.heading) * Math.min(1, 12 * dt));
           }
+        }
+
+        // Cornering drag: the harder the kart is being turned at speed, the more it scrubs speed.
+        // A high Handling stat keeps the speed through bends; low Handling drags (and a strong
+        // Acceleration stat claws the speed back). Straights are unaffected.
+        if (kart.speed > 1) {
+          const lateralAccel = (Math.abs(wrapAngle(kart.heading - headBefore)) / dt) * kart.speed;
+          const gripRatio = GRIP_REF / kart.driver.stats.handling;
+          kart.speed = Math.max(0, kart.speed - kart.speed * lateralAccel * CORNER_DRAG * gripRatio * gripRatio * dt);
         }
 
         // Charge turbo gradually from hard cornering / drifting at speed
@@ -464,6 +492,8 @@ export class RaceSimulation {
       const lapFraction = (kart.checkpoint === 0 && newS > 0.85) ? (newS - 1.0) : newS;
       kart.totalProgress = effectiveLap + lapFraction;
 
+      this._stuckWatch(kart, rawInput, dt);
+
       // Check boost pads
       for (const pad of this.track.boostPads) {
         if (Math.hypot(kart.x - pad.x, kart.z - pad.z) < pad.radius) {
@@ -487,7 +517,7 @@ export class RaceSimulation {
 
       // Check wooden `?` item crates
       for (const crate of this.crates) {
-        if (!crate.active) continue;
+        if (!crate.active || kart.finished) continue;
         if (Math.hypot(kart.x - crate.x, kart.z - crate.z) < 2.2) {
           crate.active = false;
           crate.respawnTimer = 6.0;
@@ -503,7 +533,7 @@ export class RaceSimulation {
 
       // Check Mango fruits
       for (const fruit of this.fruits) {
-        if (!fruit.active) continue;
+        if (!fruit.active || kart.finished) continue;
         if (Math.hypot(kart.x - fruit.x, kart.z - fruit.z) < 2.0) {
           fruit.active = false;
           fruit.respawnTimer = 8.0;
@@ -519,6 +549,7 @@ export class RaceSimulation {
       for (let j = i + 1; j < this.karts.length; j++) {
         const a = this.karts[i];
         const b = this.karts[j];
+        if (a.finished || b.finished) continue; // finished karts cruise on as ghosts and never block
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const dist = Math.hypot(dx, dz);
@@ -549,7 +580,7 @@ export class RaceSimulation {
         let target = null;
         let bestD = 60;
         for (const k of this.karts) {
-          if (k.id === p.ownerId || k.spinOutTimer > 0) continue;
+          if (k.id === p.ownerId || k.spinOutTimer > 0 || k.finished) continue;
           const ddx = k.x - p.x;
           const ddz = k.z - p.z;
           // only chase karts in front of the rocket
@@ -569,15 +600,28 @@ export class RaceSimulation {
         }
       }
 
+      if (p.type === 'bomb') {
+        // A bowling bomb rolls along the road in its own lane instead of sailing off into the
+        // scenery at the first bend.
+        const n = this._findNearestSample(p.x, p.z);
+        const ahead = this.track.getPointAt(n.sample.s + 0.012);
+        const lane = clamp((p.x - n.sample.x) * n.sample.rx + (p.z - n.sample.z) * n.sample.rz, -this.track.roadWidth * 0.5 + 2, this.track.roadWidth * 0.5 - 2);
+        const aimX = ahead.x + ahead.rx * lane;
+        const aimZ = ahead.z + ahead.rz * lane;
+        const want = Math.atan2(aimX - p.x, aimZ - p.z);
+        p.heading = wrapAngle(p.heading + clamp(wrapAngle(want - p.heading), -4.5 * dt, 4.5 * dt));
+        p.vx = Math.sin(p.heading) * 44;
+        p.vz = Math.cos(p.heading) * 44;
+      }
       p.x += p.vx * dt;
       p.z += p.vz * dt;
 
       // Check collision with karts
       let hit = false;
       for (const k of this.karts) {
-        if (k.id === p.ownerId) continue;
+        if (k.id === p.ownerId || k.finished) continue;
         if (Math.hypot(k.x - p.x, k.z - p.z) < 2.2) {
-          if (this._applyHit(k, p.ownerId)) {
+          if (this._applyHit(k, p.ownerId, p.type)) {
             hit = true;
             break;
           }
@@ -597,9 +641,9 @@ export class RaceSimulation {
         continue;
       }
       for (const k of this.karts) {
-        if (k.id === h.ownerId && h.ttl > 17.2) continue; // grace period for dropper
+        if (k.finished || (k.id === h.ownerId && h.ttl > 17.2)) continue; // grace period for dropper
         if (Math.hypot(k.x - h.x, k.z - h.z) < 2.1 && k.y < 1.2) {
-          if (this._applyHit(k, h.ownerId)) {
+          if (this._applyHit(k, h.ownerId, 'tnt')) {
             this.hazards.splice(i, 1);
             break;
           }
@@ -618,17 +662,63 @@ export class RaceSimulation {
       k.rank = idx + 1;
     });
 
-    // End race when all human players finish
+    // End race when all human players finish, or CLOSE_AFTER seconds after the first kart
+    // finished (so a human who is far behind or has stopped does not hold the race open forever).
     const humans = this.karts.filter((k) => !k.isAI);
     if (humans.length > 0 && humans.every((h) => h.finished)) {
       this.finishDelay += dt;
       if (this.finishDelay >= 3.0) this.status = 'finished';
     }
+    if (this.status === 'racing' && this.karts.some((k) => k.finished)) {
+      const before = this.closeTimer;
+      this.closeTimer += dt;
+      for (const mark of [30, 10]) {
+        if (CLOSE_AFTER - before > mark && CLOSE_AFTER - this.closeTimer <= mark) this.events.push({ type: 'closing', secs: mark });
+      }
+      if (this.closeTimer >= CLOSE_AFTER) this.status = 'finished';
+    }
 
     return this.getSnapshot();
   }
 
-  _applyHit(targetKart, attackerId) {
+  // Safety net: a kart that wants to move but has made no progress along the track for
+  // STUCK_WINDOW seconds is put back on the road, facing forward, with a short blink.
+  // (Humans who deliberately brake or reverse are left alone.)
+  _stuckWatch(kart, input, dt) {
+    if (kart.finished || kart.spinOutTimer > 0 || kart.y > 0.1) {
+      kart.stuckT = 0;
+      kart.stuckMark = kart.totalProgress;
+      kart.wantsGo = true;
+      return;
+    }
+    const wants = kart.isAI || (input.throttle > 0 && !input.brake && !input.reverse);
+    kart.wantsGo = kart.wantsGo && wants;
+    kart.stuckT += dt;
+    if (kart.stuckT < STUCK_WINDOW) return;
+    const moved = kart.totalProgress - kart.stuckMark;
+    const stuck = kart.wantsGo && moved < STUCK_MIN_PROGRESS;
+    kart.stuckT = 0;
+    kart.stuckMark = kart.totalProgress;
+    kart.wantsGo = true;
+    if (stuck) this._resetKart(kart);
+  }
+
+  _resetKart(kart) {
+    const n = this._findNearestSample(kart.x, kart.z).sample;
+    const half = this.track.roadWidth * 0.5 - 3;
+    const lat = clamp((kart.x - n.x) * n.rx + (kart.z - n.z) * n.rz, -half, half);
+    kart.x = n.x + n.rx * lat;
+    kart.z = n.z + n.rz * lat;
+    kart.heading = Math.atan2(n.tx, n.tz);
+    kart.speed = 10;
+    kart.y = 0;
+    kart.vy = 0;
+    kart.invulnTimer = Math.max(kart.invulnTimer, 1.5);
+    kart.resets++;
+    this.events.push({ type: 'reset', kartId: kart.id, x: kart.x, z: kart.z });
+  }
+
+  _applyHit(targetKart, attackerId, item = null) {
     if (targetKart.invulnTimer > 0 || targetKart.spinOutTimer > 0) return false;
     if (targetKart.shieldTimer > 0) {
       targetKart.shieldTimer = 0;
@@ -636,13 +726,14 @@ export class RaceSimulation {
       this.events.push({ type: 'shield_block', kartId: targetKart.id, x: targetKart.x, z: targetKart.z });
       return true;
     }
-    targetKart.spinOutTimer = 1.15;
-    targetKart.invulnTimer = 2.6;
-    targetKart.speed *= 0.25;
+    targetKart.spinOutTimer = SPIN_TIME;
+    targetKart.spinBase = targetKart.heading;
+    targetKart.invulnTimer = 2.4;
+    targetKart.speed *= 0.55;
     targetKart.mango = Math.max(0, targetKart.mango - 2);
     const attacker = this.karts.find((k) => k.id === attackerId);
     if (attacker) attacker.statsSummary.hitsLanded++;
-    this.events.push({ type: 'explosion', kartId: targetKart.id, x: targetKart.x, z: targetKart.z });
+    this.events.push({ type: 'explosion', kartId: targetKart.id, attackerId, item, x: targetKart.x, z: targetKart.z });
     return true;
   }
 
@@ -677,11 +768,13 @@ export class RaceSimulation {
         finished: k.finished,
         finishTimeSec: k.finishTimeSec,
         statsSummary: k.statsSummary,
+        resets: k.resets,
       })),
       crates: this.crates.map((c) => ({ id: c.id, x: c.x, y: c.y, z: c.z, active: c.active })),
       fruits: this.fruits.map((f) => ({ id: f.id, x: f.x, y: f.y, z: f.z, active: f.active })),
       projectiles: this.projectiles.map((p) => ({ id: p.id, type: p.type, x: p.x, y: p.y, z: p.z, heading: p.heading })),
       hazards: this.hazards.map((h) => ({ id: h.id, type: h.type, x: h.x, y: h.y, z: h.z })),
+      closeIn: this.closeTimer > 0 ? Number(Math.max(0, CLOSE_AFTER - this.closeTimer).toFixed(1)) : null,
       events: [...this.events],
     };
   }
