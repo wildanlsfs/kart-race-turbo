@@ -44,10 +44,21 @@ export class RaceSimulation {
     const startPt = this.track.getPointAt(0.985);
     const startHeading = Math.atan2(startPt.tx, startPt.tz);
 
+    // Starting grid: AI karts take the front rows, human players the back row, so no kart sits
+    // between a player's chase camera and the road ahead.
+    const slotOf = new Map();
+    {
+      const ais = roster.filter((p) => p.isAI);
+      const humans = roster.filter((p) => !p.isAI);
+      ais.forEach((p, i) => slotOf.set(p, i));
+      humans.forEach((p, i) => slotOf.set(p, ais.length + i));
+    }
+
     this.karts = roster.map((p, idx) => {
       const driver = DRIVERS.find((d) => d.id === p.driverId) || DRIVERS[idx % DRIVERS.length];
-      const laneOffset = ((idx % 2 === 0 ? -1 : 1) * 2.6) + (idx >= 2 ? 0.5 : -0.5);
-      const rowBack = Math.floor(idx / 2) * 4.2;
+      const slot = slotOf.get(p);
+      const rowBack = Math.floor(slot / 2) * 5.0;
+      const laneOffset = (slot % 2 === 0 ? -1 : 1) * 2.6;
       const x = startPt.x + startPt.rx * laneOffset - startPt.tx * rowBack;
       const z = startPt.z + startPt.rz * laneOffset - startPt.tz * rowBack;
 
@@ -70,7 +81,7 @@ export class RaceSimulation {
         trackS: 0.985,
         totalProgress: 0,
         rank: idx + 1,
-        wumpa: 0,
+        mango: 0,
         turboCharge: 45, // start with 45% turbo so players can test boost early
         turboActiveTimer: 0,
         padBoostTimer: 0,
@@ -323,9 +334,9 @@ export class RaceSimulation {
         const halfRoad = this.track.roadWidth * 0.5;
         const offRoad = nearest.dist > halfRoad + 1.2;
 
-        const wumpaBonus = Math.min(10, kart.wumpa) * 0.25;
+        const mangoBonus = Math.min(10, kart.mango) * 0.25;
         const boostBonus = (kart.turboActiveTimer > 0 ? kart.driver.stats.boostBonus : 0) + (kart.padBoostTimer > 0 ? 11 : 0);
-        const effectiveTopSpeed = (kart.baseTopSpeed + wumpaBonus + boostBonus) * (offRoad && kart.turboActiveTimer <= 0 ? 0.72 : 1.0);
+        const effectiveTopSpeed = (kart.baseTopSpeed + mangoBonus + boostBonus) * (offRoad && kart.turboActiveTimer <= 0 ? 0.72 : 1.0);
 
         const topScale = (kart.isAI || kart.finished) ? kart.aiPace : 1;
         const topSpeed = effectiveTopSpeed * topScale;
@@ -490,13 +501,13 @@ export class RaceSimulation {
         }
       }
 
-      // Check Wumpa fruits
+      // Check Mango fruits
       for (const fruit of this.fruits) {
         if (!fruit.active) continue;
         if (Math.hypot(kart.x - fruit.x, kart.z - fruit.z) < 2.0) {
           fruit.active = false;
           fruit.respawnTimer = 8.0;
-          kart.wumpa = Math.min(10, kart.wumpa + 1);
+          kart.mango = Math.min(10, kart.mango + 1);
           kart.turboCharge = Math.min(100, kart.turboCharge + 4);
           this.events.push({ type: 'fruit_pickup', kartId: kart.id });
         }
@@ -628,7 +639,7 @@ export class RaceSimulation {
     targetKart.spinOutTimer = 1.15;
     targetKart.invulnTimer = 2.6;
     targetKart.speed *= 0.25;
-    targetKart.wumpa = Math.max(0, targetKart.wumpa - 2);
+    targetKart.mango = Math.max(0, targetKart.mango - 2);
     const attacker = this.karts.find((k) => k.id === attackerId);
     if (attacker) attacker.statsSummary.hitsLanded++;
     this.events.push({ type: 'explosion', kartId: targetKart.id, x: targetKart.x, z: targetKart.z });
@@ -655,11 +666,12 @@ export class RaceSimulation {
         steerAngle: Number(k.steerAngle.toFixed(2)),
         lap: Math.min(this.totalLaps, k.lap),
         rank: k.rank,
-        wumpa: k.wumpa,
+        mango: k.mango,
         turboCharge: Math.round(k.turboCharge),
         turboActive: k.turboActiveTimer > 0 || k.padBoostTimer > 0,
         spinOut: k.spinOutTimer > 0,
         shieldActive: k.shieldTimer > 0,
+        invuln: k.invulnTimer > 0,
         heldItem: k.heldItem,
         punching: k.punchAnimTimer > 0,
         finished: k.finished,

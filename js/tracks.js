@@ -1,20 +1,20 @@
-// Closed Catmull-Rom circuit splines, Crash-inspired tracks, and faceless driver roster.
+// Closed Catmull-Rom circuit splines, original circuits, and faceless driver roster.
 
 export const DRIVERS = [
   {
-    id: 'bandi',
-    name: 'Bandi Dash',
+    id: 'rufus',
+    name: 'Rufus Dash',
     role: 'Balanced',
     color: '#ff6f1e',
     suitColor: '#2563eb',
     kartColor: '#f97316',
     accent: '#facc15',
-    headgear: 'ears', // Bandicoot pointed ears (faceless)
+    headgear: 'ears', // Pointed fox ears (faceless)
     stats: { topSpeed: 29, accel: 26, handling: 4.0, boostBonus: 12 },
   },
   {
-    id: 'nitro',
-    name: 'Nitro Oxide',
+    id: 'jet',
+    name: 'Jet Mint',
     role: 'Top Speed',
     color: '#22c55e',
     suitColor: '#14532d',
@@ -24,8 +24,8 @@ export const DRIVERS = [
     stats: { topSpeed: 30, accel: 23, handling: 3.8, boostBonus: 12.5 },
   },
   {
-    id: 'tiki',
-    name: 'Aku Tiki',
+    id: 'maka',
+    name: 'Maka Tiki',
     role: 'Handling',
     color: '#eab308',
     suitColor: '#78350f',
@@ -35,7 +35,7 @@ export const DRIVERS = [
     stats: { topSpeed: 28, accel: 27, handling: 4.4, boostBonus: 12 },
   },
   {
-    id: 'cortex',
+    id: 'volt',
     name: 'Neo Volt',
     role: 'Acceleration',
     color: '#a855f7',
@@ -116,7 +116,7 @@ function buildTrackData(def) {
     };
   };
 
-  // Place item crate rows, wumpa fruits, boost pads, and ramps along track fractions
+  // Place item crate rows, mango fruits, boost pads, and ramps along track fractions
   const crateSpawns = [];
   for (const rowS of def.crateRowFractions) {
     const pt = getPointAt(rowS);
@@ -189,7 +189,7 @@ function buildTrackData(def) {
 const RAW_TRACKS = [
   {
     id: 'island',
-    name: 'N. Sanity Island',
+    name: 'Palm Cove',
     subtitle: 'Sunny beach curves & wooden tiki bridges',
     roadWidth: 13.5,
     theme: {

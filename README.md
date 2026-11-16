@@ -1,10 +1,10 @@
 # Kart Race Turbo 🏎️💨
 
-A 3D minimalist multiplayer kart racing game inspired by *Crash Team Racing*, controlled by **webcam body motions** (plus keyboard, gamepad, and touch fallback).
+A 3D minimalist multiplayer kart racing game inspired by classic arcade kart racers, controlled by **webcam body motions** (plus keyboard, gamepad, and touch fallback).
 
 ## Game Modes
 
-1. **Single Player:** Race against 3 AI karts across 3 circuits (*N. Sanity Island*, *Canyon Dash*, *Temple Ruins*).
+1. **Single Player:** Race against 3 AI karts across 3 circuits (*Palm Cove*, *Canyon Dash*, *Temple Ruins*).
 2. **2-Player Split-Screen (Same Device):** Two players stand or sit side-by-side in front of a single webcam (left half = Player 1, right half = Player 2) or share a keyboard (`WASD` + `Arrows`).
 3. **Wi-Fi / LAN Multiplayer (Same Network):** Up to 4 players across laptops, tablets, or phones on the same Wi-Fi network race together in real time with 4-letter room codes and one-tap LAN room discovery.
 

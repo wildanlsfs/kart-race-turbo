@@ -100,3 +100,23 @@ test('Comfort deadzone filters micro-jitter while deliberate leans produce smoot
   [p1] = ctrl.update([fullRight], 500, 1);
   assert.ok(p1.steer > 0.65, `Expected full lean + wheel tilt to give >0.65 steer, got ${p1.steer}`);
 });
+
+test('Steering is proportional: a moderate lean does not saturate, and a held lean keeps its strength', () => {
+  const ctrl = new MotionController({ autoGas: true });
+  ctrl.calibrate([makeSyntheticPose({ centerX: 0.5, shoulderWidth: 0.2 })], 1);
+  let out;
+  for (let f = 0; f < 60; f++) out = ctrl.update([makeSyntheticPose({ leanRight: 0.4 })], f * 33.3, 1)[0];
+  assert.ok(out.steer > 0.1 && out.steer < 0.6, `moderate lean should give moderate steer, got ${out.steer}`);
+
+  const held = new MotionController({ autoGas: true });
+  held.calibrate([makeSyntheticPose({ centerX: 0.5, shoulderWidth: 0.2 })], 1);
+  let early;
+  let late;
+  for (let f = 0; f < 240; f++) {
+    const o = held.update([makeSyntheticPose({ leanRight: 0.8 })], f * 33.3, 1)[0];
+    if (f === 30) early = o.steer;
+    late = o.steer;
+  }
+  assert.ok(early > 0.4, `held lean should steer, got ${early}`);
+  assert.ok(late > early * 0.9, `held lean must not fade over 8s (${early} -> ${late})`);
+});

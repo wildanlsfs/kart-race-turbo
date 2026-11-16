@@ -23,7 +23,7 @@ const state = {
   screen: 'menu', // 'menu' | 'calibrate' | 'lan_lobby' | 'racing' | 'finished'
   mode: '1p', // '1p' | '2p' | 'lan'
   selectedTrackId: 'island',
-  selectedDriverId: 'bandi',
+  selectedDriverId: 'rufus',
   autoGas: true,
   webcamEnabled: false,
   webcamReady: false,
@@ -34,6 +34,8 @@ const state = {
   sim: null,
   lastSnapshot: null,
   lanPlayerId: null,
+  lanPrev: null,
+  lanCurr: null,
 };
 
 const canvas = document.getElementById('game-canvas');
@@ -74,7 +76,7 @@ function rebuildMenuPreview() {
     mode: '1p',
     players: [{ id: 'showcase', name: 'Showcase', driverId: state.selectedDriverId, isAI: true }],
     totalLaps: 3,
-    fillAI: true,
+    fillAI: false,
   });
   menuPreviewSim.countdown = 0;
   menuPreviewSim.status = 'racing';
@@ -137,6 +139,7 @@ const minimapCardEl = document.getElementById('minimap-card');
 function setScreen(screenName) {
   state.screen = screenName;
   document.body.setAttribute('data-screen', screenName);
+  document.body.setAttribute('data-mode', state.mode);
   for (const [k, el] of Object.entries(modals)) {
     el.classList.toggle('hidden', k !== screenName);
   }
@@ -154,22 +157,38 @@ const btnAutoGas = document.getElementById('btn-auto-gas');
 btnAutoGas.addEventListener('click', () => {
   state.autoGas = !state.autoGas;
   motionCtrl.setAutoGas(state.autoGas);
-  btnAutoGas.textContent = `⚡ Auto-Gas: ${state.autoGas ? 'ON' : 'WHEEL'}`;
+  btnAutoGas.querySelector('.lbl').textContent = `Auto-Gas: ${state.autoGas ? 'ON' : 'WHEEL'}`;
   btnAutoGas.classList.toggle('active', state.autoGas);
 });
 
 const btnComfort = document.getElementById('btn-comfort');
 btnComfort.addEventListener('click', () => {
   renderer.comfortMode = !renderer.comfortMode;
-  btnComfort.textContent = `🌀 Comfort: ${renderer.comfortMode ? 'ON' : 'OFF'}`;
+  btnComfort.querySelector('.lbl').textContent = `Comfort: ${renderer.comfortMode ? 'ON' : 'OFF'}`;
+  try { localStorage.setItem('krt-comfort', renderer.comfortMode ? '1' : '0'); } catch (_) {}
   btnComfort.classList.toggle('active', renderer.comfortMode);
 });
 
 const btnSound = document.getElementById('btn-sound');
 btnSound.addEventListener('click', () => {
   const muted = sfx.toggleMute();
-  btnSound.textContent = muted ? '🔇 Muted' : '🔊 SFX';
+  btnSound.querySelector('.ico').textContent = muted ? '🔇' : '🔊';
+  btnSound.querySelector('.lbl').textContent = muted ? 'Muted' : 'SFX';
 });
+
+// Restore the comfort preference and honour the OS reduce-motion setting (comfort = calmer camera).
+try {
+  const saved = localStorage.getItem('krt-comfort');
+  if (saved !== null) renderer.comfortMode = saved === '1';
+  else if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) renderer.comfortMode = true;
+} catch (_) {}
+btnComfort.querySelector('.lbl').textContent = `Comfort: ${renderer.comfortMode ? 'ON' : 'OFF'}`;
+btnComfort.classList.toggle('active', renderer.comfortMode);
+
+// Touch controls only appear on touch devices (or once a touch is seen).
+const isTouchDevice = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 0;
+if (isTouchDevice) document.body.classList.add('touch');
+window.addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true, passive: true });
 
 btnMenuReturn.addEventListener('click', () => {
   if (state.mode === 'lan') lanClient.leaveRoom();
@@ -320,7 +339,13 @@ async function startWebcamAndWorker() {
   return cameraStartPromise;
 }
 
+function syncCameraUi() {
+  const on = Boolean(state.webcamEnabled || state.syntheticPoses);
+  document.body.classList.toggle('cam-on', on);
+}
+
 function drawPipOverlay(motionInputs) {
+  if (!document.body.classList.contains('cam-on')) return;
   const w = pipCanvas.width;
   const h = pipCanvas.height;
   pipCtx.clearRect(0, 0, w, h);
@@ -555,7 +580,7 @@ document.getElementById('btn-recalibrate').addEventListener('click', async () =>
 function startLocalRace(mode) {
   state.mode = mode;
   const p1Driver = state.selectedDriverId;
-  const p2Driver = DRIVERS.find((d) => d.id !== p1Driver)?.id || 'nitro';
+  const p2Driver = DRIVERS.find((d) => d.id !== p1Driver)?.id || 'jet';
   const players = mode === '2p'
     ? [
         { id: 'p1', name: 'Player 1', driverId: p1Driver, isAI: false },
@@ -632,8 +657,10 @@ const lanClient = new LanClient({
   },
   onSnapshot: (snapshot, myPlayerId) => {
     state.lanPlayerId = myPlayerId;
+    state.lanPrev = state.lanCurr;
+    state.lanCurr = { snap: snapshot, t: performance.now() };
     state.lastSnapshot = snapshot;
-    handleSimulationEvents(snapshot.events || []);
+    handleSimulationEvents(snapshot.events || [], snapshot.totalLaps);
     if (state.screen !== 'racing' && snapshot.status !== 'finished') {
       setScreen('racing');
     }
@@ -769,26 +796,95 @@ function buildCombinedInput(playerIdx, motionInput) {
   return { throttle, brake, reverse, steer, turbo, attack, hop, poseLabel };
 }
 
-function handleSimulationEvents(events) {
+const bannerEl = document.getElementById('event-banner');
+let bannerTimer = null;
+function showBanner(text, kind = '', ms = 1400) {
+  if (!bannerEl) return;
+  bannerEl.textContent = text;
+  bannerEl.className = `event-banner ${kind}`;
+  void bannerEl.offsetWidth; // restart the pop animation
+  bannerEl.classList.add('pop');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => bannerEl.classList.add('hidden'), ms);
+}
+
+function myKartIds() {
+  if (state.mode === 'lan') return state.lanPlayerId ? [state.lanPlayerId] : [];
+  return state.mode === '2p' ? ['p1', 'p2'] : ['p1'];
+}
+
+function handleSimulationEvents(events, totalLaps = 3) {
+  const mine = new Set(myKartIds());
+  const solo = mine.size === 1; // in split-screen, banners would be ambiguous
   for (const ev of events) {
+    const isMine = mine.has(ev.kartId);
     if (ev.type === 'countdown') sfx.countdown(ev.count);
-    else if (ev.type === 'crate_smash') sfx.crateSmash();
-    else if (ev.type === 'fruit_pickup') sfx.fruitPickup();
-    else if (ev.type === 'turbo' || ev.type === 'pad_boost') sfx.turbo();
-    else if (ev.type === 'hop' || ev.type === 'ramp_jump') sfx.hop();
+    else if (ev.type === 'crate_smash') {
+      if (isMine || !solo) sfx.crateSmash();
+      if (isMine && solo && ev.item) showBanner(`${ITEM_LABELS[ev.item]} — punch to use!`, 'item', 1500);
+      renderer.spawnBurst(ev.x, 1, ev.z, '#ffb84d', 0.9);
+    } else if (ev.type === 'fruit_pickup') { if (isMine) sfx.fruitPickup(); }
+    else if (ev.type === 'turbo' || ev.type === 'pad_boost') { if (isMine) sfx.turbo(); }
+    else if (ev.type === 'hop' || ev.type === 'ramp_jump') { if (isMine) sfx.hop(); }
     else if (ev.type === 'attack') sfx.attack();
-    else if (ev.type === 'explosion') sfx.explosion();
-    else if (ev.type === 'shield_block') sfx.shieldBlock();
-    else if (ev.type === 'lap') sfx.lap();
-    else if (ev.type === 'finish') sfx.victory();
+    else if (ev.type === 'explosion') {
+      sfx.explosion();
+      renderer.spawnBurst(ev.x, 1, ev.z, '#ff5d73', 1.6);
+      if (isMine && solo) showBanner('HIT! Spin-out', 'bad', 1100);
+    } else if (ev.type === 'shield_block') {
+      sfx.shieldBlock();
+      renderer.spawnBurst(ev.x, 1.2, ev.z, '#5ef0ff', 1.2);
+      if (isMine && solo) showBanner('Shield blocked it!', 'good', 1100);
+    } else if (ev.type === 'wall') {
+      if (isMine) sfx.thud();
+    } else if (ev.type === 'lap') {
+      if (isMine) {
+        sfx.lap();
+        if (solo && ev.lap <= totalLaps) showBanner(ev.lap === totalLaps ? 'FINAL LAP!' : `LAP ${ev.lap}/${totalLaps}`, 'lap', 1500);
+      }
+    } else if (ev.type === 'finish') {
+      if (isMine) {
+        sfx.victory();
+        if (solo) showBanner('FINISH!', 'lap', 3000);
+      }
+    }
   }
+}
+
+// LAN snapshots arrive at ~30 Hz; render at display rate by blending the last two.
+function interpolateLanSnapshot(nowMs) {
+  const cur = state.lanCurr;
+  const prev = state.lanPrev;
+  if (!prev || prev.snap.trackId !== cur.snap.trackId) return cur.snap;
+  const span = Math.max(16, cur.t - prev.t);
+  const a = Math.min(1, Math.max(0, (nowMs - cur.t) / span));
+  const byId = new Map(prev.snap.karts.map((k) => [k.id, k]));
+  const lerpAngle = (x, y) => {
+    let d = y - x;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return x + d * a;
+  };
+  const karts = cur.snap.karts.map((k) => {
+    const p = byId.get(k.id);
+    if (!p) return k;
+    return {
+      ...k,
+      x: p.x + (k.x - p.x) * a,
+      y: p.y + (k.y - p.y) * a,
+      z: p.z + (k.z - p.z) * a,
+      speed: p.speed + (k.speed - p.speed) * a,
+      heading: lerpAngle(p.heading, k.heading),
+    };
+  });
+  return { ...cur.snap, karts };
 }
 
 function updateHudCard(prefix, kart, totalLaps, poseLabel) {
   if (!kart) return;
   document.getElementById(`${prefix}-rank`).textContent = ordinal(kart.rank);
   document.getElementById(`${prefix}-lap`).textContent = `LAP ${kart.lap}/${totalLaps}`;
-  document.getElementById(`${prefix}-wumpa`).textContent = `🟠 ${kart.wumpa}/10`;
+  document.getElementById(`${prefix}-mango`).textContent = `🟠 ${kart.mango}/10`;
   document.getElementById(`${prefix}-item`).textContent = kart.heldItem ? `${ITEM_LABELS[kart.heldItem]} (Punch!)` : '📦 No Item';
   document.getElementById(`${prefix}-speed`).textContent = Math.max(0, Math.round(kart.speed * 3.2));
   document.getElementById(`${prefix}-turbo-pct`).textContent = `${kart.turboCharge}%`;
@@ -800,20 +896,21 @@ function showFinishModal(snapshot) {
   setScreen('finished');
   const listEl = document.getElementById('finish-standings');
   listEl.innerHTML = '';
+  const mine = new Set(myKartIds());
   const sorted = [...snapshot.karts].sort((a, b) => a.rank - b.rank);
   for (const k of sorted) {
     const row = document.createElement('div');
-    row.className = 'standing-row';
-    row.innerHTML = `
-      <strong>${ordinal(k.rank)} — ${k.name}</strong>
-      <span>${k.finishTimeSec ? `${k.finishTimeSec}s` : 'Racing'}</span>
-    `;
+    row.className = `standing-row${mine.has(k.id) ? ' me' : ''}`;
+    const t = k.finishTimeSec ? `${k.finishTimeSec.toFixed(1)}s` : 'still racing';
+    row.innerHTML = `<strong>${ordinal(k.rank)} — ${k.name}${mine.has(k.id) ? ' (you)' : ''}</strong><span>${t}</span>`;
     listEl.appendChild(row);
   }
-  const p1 = snapshot.karts[0];
-  const st = p1?.statsSummary || { cratesSmashed: 0, turbosUsed: 0, attacksFired: 0, hitsLanded: 0 };
+  const me = snapshot.karts.find((k) => mine.has(k.id)) || snapshot.karts[0];
+  const title = document.getElementById('finish-title');
+  if (title && me) title.textContent = me.rank === 1 ? '🏆 You Win!' : me.rank <= 3 ? `🏅 ${ordinal(me.rank)} Place!` : `🏁 ${ordinal(me.rank)} Place`;
+  const st = me?.statsSummary || { cratesSmashed: 0, turbosUsed: 0, attacksFired: 0, hitsLanded: 0 };
   document.getElementById('finish-activity').textContent =
-    `Crates Smashed: ${st.cratesSmashed} · Turbos Activated: ${st.turbosUsed} · Punch Attacks: ${st.attacksFired} · Direct Hits: ${st.hitsLanded}`;
+    `Crates: ${st.cratesSmashed} · Turbos: ${st.turbosUsed} · Items fired: ${st.attacksFired} · Direct hits: ${st.hitsLanded}`;
 }
 
 document.getElementById('btn-race-again').addEventListener('click', () => {
@@ -867,6 +964,7 @@ function animate(nowMs) {
     ? motionCtrl.update(activePoses, nowMs, playerCount)
     : [];
 
+  syncCameraUi();
   drawPipOverlay(motionInputs);
 
   if (state.screen === 'racing') {
@@ -875,17 +973,26 @@ function animate(nowMs) {
 
     if (state.mode === 'lan') {
       lanClient.sendInput(p1In);
-      if (state.lastSnapshot) {
-        const myId = state.lanPlayerId || state.lastSnapshot.karts[0]?.id;
-        const myKart = state.lastSnapshot.karts.find((k) => k.id === myId) || state.lastSnapshot.karts[0];
-        renderer.render(state.lastSnapshot, { mode: 'lan', focusKartIds: [myKart.id], dt, isMenuShowcase: false });
-        updateHudCard('p1', myKart, state.lastSnapshot.totalLaps, p1In.poseLabel);
-        drawMinimap(state.lastSnapshot);
+      if (state.lanCurr) {
+        const snap = interpolateLanSnapshot(nowMs);
+        const myId = state.lanPlayerId || snap.karts[0]?.id;
+        const myKart = snap.karts.find((k) => k.id === myId) || snap.karts[0];
+        const countdownEl = document.getElementById('countdown-banner');
+        if (snap.status === 'countdown') {
+          countdownEl.classList.remove('hidden');
+          countdownEl.textContent = Math.max(1, Math.ceil(snap.countdown));
+        } else {
+          countdownEl.classList.add('hidden');
+        }
+        renderer.render(snap, { mode: 'lan', focusKartIds: [myKart.id], dt, isMenuShowcase: false });
+        updateHudCard('p1', myKart, snap.totalLaps, p1In.poseLabel);
+        sfx.engineTick(myKart.speed / 38);
+        drawMinimap(snap);
       }
     } else if (state.sim) {
       const snap = state.sim.step(dt, { p1: p1In, p2: p2In });
       state.lastSnapshot = snap;
-      handleSimulationEvents(snap.events);
+      handleSimulationEvents(snap.events, snap.totalLaps);
 
       const countdownEl = document.getElementById('countdown-banner');
       if (snap.status === 'countdown') {
@@ -942,7 +1049,7 @@ window.__game = {
     autoGas: state.autoGas,
     snapshot: state.lastSnapshot,
   }),
-  startMode: (mode = '1p', trackId = 'island', driverId = 'bandi') => {
+  startMode: (mode = '1p', trackId = 'island', driverId = 'rufus') => {
     state.selectedTrackId = trackId;
     state.selectedDriverId = driverId;
     startLocalRace(mode);

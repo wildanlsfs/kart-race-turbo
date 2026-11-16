@@ -90,6 +90,25 @@ function makeCrateTexture(label = '?', bg = '#ff9f43', border = '#9a4d12', textC
   });
 }
 
+function makeChevronTexture() {
+  return canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#1fa84a';
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#d9ffe0';
+    g.lineWidth = 16;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (let i = 0; i < 2; i++) {
+      const y = 22 + i * 56;
+      g.beginPath();
+      g.moveTo(22, y + 36);
+      g.lineTo(64, y);
+      g.lineTo(106, y + 36);
+      g.stroke();
+    }
+  });
+}
+
 function makeCheckerTexture() {
   return canvasTex(128, 128, (g) => {
     for (let y = 0; y < 8; y++) {
@@ -130,7 +149,7 @@ function makeRoadTexture(roadHex, lineHex = '#fffdf7') {
   }, [1, 42]);
 }
 
-function makeGrassTexture(baseHex, accentHex) {
+function makeGrassTexture(baseHex, accentHex, style = 'meadow') {
   return canvasTex(256, 256, (g) => {
     g.fillStyle = baseHex;
     g.fillRect(0, 0, 256, 256);
@@ -142,7 +161,28 @@ function makeGrassTexture(baseHex, accentHex) {
       g.ellipse(x, y, 6, 3, (i % 5) * 0.5, 0, Math.PI * 2);
       g.fill();
     }
-    // Little flowers
+    if (style === 'rock') {
+      // dry rocky ground: pebbles and cracks, no flowers
+      g.strokeStyle = 'rgba(90, 30, 10, 0.18)';
+      g.lineWidth = 2;
+      for (let i = 0; i < 9; i++) {
+        const x = (i * 83 + 17) % 256;
+        const y = (i * 151 + 9) % 256;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + 26, y + 9);
+        g.lineTo(x + 40, y - 6);
+        g.stroke();
+      }
+      for (let i = 0; i < 26; i++) {
+        g.fillStyle = i % 2 ? 'rgba(120, 50, 20, 0.22)' : 'rgba(255, 220, 170, 0.22)';
+        g.beginPath();
+        g.ellipse((i * 71) % 256, (i * 113) % 256, 4, 2.6, i * 0.7, 0, Math.PI * 2);
+        g.fill();
+      }
+      return;
+    }
+    // Little flowers (meadow only)
     const flowerCols = ['#fffdf7', '#ffd166', '#ff8fab'];
     for (let i = 0; i < 12; i++) {
       const x = (i * 59 + 20) % 240;
@@ -242,6 +282,10 @@ export class RaceRenderer {
     this.projectileMeshes = new Map();
     this.hazardMeshes = new Map();
     this.currentTrackId = null;
+    this.bursts = [];
+    this.burstGeo = new THREE.IcosahedronGeometry(0.28, 0);
+    this.burstMats = new Map();
+    this.fov = 58;
 
     this._setupLights();
     this.resize();
@@ -325,7 +369,7 @@ export class RaceRenderer {
     this.trackGroup.add(skyDome);
 
     // 2. Textured Ground Plane
-    const grassTex = makeGrassTexture(palette.grassA, palette.grassB);
+    const grassTex = makeGrassTexture(palette.grassA, palette.grassB, track.id === 'canyon' ? 'rock' : 'meadow');
     const groundGeo = new THREE.PlaneGeometry(680, 680);
     groundGeo.rotateX(-Math.PI * 0.5);
     const groundMesh = new THREE.Mesh(groundGeo, new THREE.MeshToonMaterial({ map: grassTex, gradientMap: toonRamp }));
@@ -415,7 +459,9 @@ export class RaceRenderer {
 
     // 6. Glowing Chevron Boost Pads & Jump Ramps
     const padGeo = new THREE.BoxGeometry(4.4, 0.14, 5.4);
-    const padMat = new THREE.MeshBasicMaterial({ color: 0x5bd77a });
+    this.padTex = makeChevronTexture();
+    this.padTex.repeat.set(1, 1);
+    const padMat = new THREE.MeshBasicMaterial({ map: this.padTex });
     for (const pad of track.boostPads) {
       const m = part(padGeo, padMat, { outline: 0.03, cast: false });
       m.position.set(pad.x, 0.08, pad.z);
@@ -435,7 +481,7 @@ export class RaceRenderer {
     // 7. Distant Hills, Mountains & Trackside Cartoon Scenery
     this._buildSceneryProps(track, palette);
 
-    // 8. Item Crates & Wumpa Fruits with Leaves
+    // 8. Item Crates & Mango Fruits with Leaves
     for (const c of track.crateSpawns) {
       const mesh = part(this.shared.crateGeo, this.shared.crateMat, { outline: 0.045 });
       mesh.position.set(c.x, c.y, c.z);
@@ -736,6 +782,41 @@ export class RaceRenderer {
     return entry;
   }
 
+  // Short, calm particle puff (no screen shake): used for crate smash, hits, shield blocks.
+  spawnBurst(x, y, z, color = '#ffffff', size = 1) {
+    if (!this.webglAvailable) return;
+    if (!this.burstMats.has(color)) this.burstMats.set(color, new THREE.MeshBasicMaterial({ color }));
+    const mat = this.burstMats.get(color);
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+      if (this.bursts.length > 60) break;
+      const m = new THREE.Mesh(this.burstGeo, mat);
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
+      const sp = (2.5 + Math.random() * 3) * size;
+      m.position.set(x, y, z);
+      m.scale.setScalar(size * (0.8 + Math.random() * 0.8));
+      this.scene.add(m);
+      this.bursts.push({ m, vx: Math.cos(a) * sp, vy: 2 + Math.random() * 3.5, vz: Math.sin(a) * sp, life: 0.55 });
+    }
+  }
+
+  _updateBursts(dt) {
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const b = this.bursts[i];
+      b.life -= dt;
+      if (b.life <= 0) {
+        this.scene.remove(b.m);
+        this.bursts.splice(i, 1);
+        continue;
+      }
+      b.vy -= 12 * dt;
+      b.m.position.x += b.vx * dt;
+      b.m.position.y = Math.max(0.1, b.m.position.y + b.vy * dt);
+      b.m.position.z += b.vz * dt;
+      b.m.scale.multiplyScalar(Math.max(0.2, 1 - 1.6 * dt));
+    }
+  }
+
   _updateCameraForKart(camIdx, kart, dt = 1 / 60, isMenuShowcase = false) {
     const cam = this.cameras[camIdx];
     const st = this.camStates[camIdx];
@@ -746,14 +827,14 @@ export class RaceRenderer {
       const viewYaw = kart.heading + 0.38 + Math.sin(this.menuOrbitAngle) * 0.18;
       const dist = 6.8;
       cam.position.set(
-        kart.x - Math.sin(viewYaw) * dist - Math.cos(kart.heading) * 1.6,
+        kart.x - Math.sin(viewYaw) * dist + Math.cos(kart.heading) * 1.2,
         kart.y + 2.65,
-        kart.z - Math.cos(viewYaw) * dist + Math.sin(kart.heading) * 1.6
+        kart.z - Math.cos(viewYaw) * dist - Math.sin(kart.heading) * 1.2
       );
       cam.lookAt(
-        kart.x + Math.sin(kart.heading) * 2.2 - Math.cos(kart.heading) * 1.2,
+        kart.x + Math.sin(kart.heading) * 1.4 + Math.cos(kart.heading) * 3.3,
         kart.y + 1.05,
-        kart.z + Math.cos(kart.heading) * 2.2 + Math.sin(kart.heading) * 1.2
+        kart.z + Math.cos(kart.heading) * 1.4 - Math.sin(kart.heading) * 3.3
       );
       return;
     }
@@ -784,6 +865,12 @@ export class RaceRenderer {
     st.y += (targetY - st.y) * posLerp;
     st.z += (targetZ - st.z) * posLerp;
 
+    const fovTarget = 58 + Math.min(1, Math.max(0, kart.speed) / 40) * (this.comfortMode ? 3 : 7) + (kart.turboActive ? (this.comfortMode ? 2 : 5) : 0);
+    st.fov = (st.fov || 58) + (fovTarget - (st.fov || 58)) * Math.min(1, 4 * dt);
+    if (Math.abs(cam.fov - st.fov) > 0.05) {
+      cam.fov = st.fov;
+      cam.updateProjectionMatrix();
+    }
     cam.position.set(st.x, st.y, st.z);
     cam.lookAt(
       kart.x + Math.sin(st.yaw) * 6.5,
@@ -797,6 +884,8 @@ export class RaceRenderer {
     this.buildTrack(snapshot.trackId);
 
     const nowSec = performance.now() * 0.001;
+    this._updateBursts(dt);
+    if (this.padTex) this.padTex.offset.y = -((nowSec * 1.6) % 1);
 
     for (const k of snapshot.karts) {
       const m = this.kartMeshes.get(k.id) || this._createFacelessKartMesh(k);
@@ -852,6 +941,8 @@ export class RaceRenderer {
       }
 
       m.shieldMesh.visible = Boolean(k.shieldActive);
+      // blink while briefly invulnerable after a hit (readable, no flashing faster than ~6 Hz)
+      m.rig.visible = !(k.invuln && !k.spinOut && Math.floor(nowSec * 6) % 2 === 0);
     }
 
     for (const c of snapshot.crates) {
@@ -1143,7 +1234,7 @@ export class RaceRenderer {
       ctx.fill();
       ctx.stroke();
 
-      // Pointed Bandicoot Ears / Helmet Fin
+      // Pointed Ears / Helmet Fin
       for (const sx of [-1, 1]) {
         ctx.fillStyle = drv.color;
         ctx.beginPath();

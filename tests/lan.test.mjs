@@ -25,7 +25,7 @@ test('LAN server creates room, lists rooms on /api/lan-info, syncs race snapshot
     ]);
 
     const roomCreatedP = waitMsg(ws1, 'room_state');
-    ws1.send(JSON.stringify({ type: 'create_room', name: 'HostWildan', driverId: 'bandi', trackId: 'canyon' }));
+    ws1.send(JSON.stringify({ type: 'create_room', name: 'HostWildan', driverId: 'rufus', trackId: 'canyon' }));
     const created = await roomCreatedP;
     assert.equal(created.room.code.length, 4);
 
@@ -36,7 +36,7 @@ test('LAN server creates room, lists rooms on /api/lan-info, syncs race snapshot
 
     // Player 2 joins room
     const joinedP = waitMsg(ws2, 'room_state');
-    ws2.send(JSON.stringify({ type: 'join_room', code: created.room.code, name: 'Guest2', driverId: 'nitro' }));
+    ws2.send(JSON.stringify({ type: 'join_room', code: created.room.code, name: 'Guest2', driverId: 'jet' }));
     const joined = await joinedP;
     assert.equal(joined.room.players.length, 2);
 

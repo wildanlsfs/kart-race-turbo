@@ -90,6 +90,10 @@ export class SoundFX {
     this.tone(740, 0.18, 'triangle', 0.15, 380);
   }
 
+  thud() {
+    this.tone(95, 0.1, 'square', 0.1, 55);
+  }
+
   lap() {
     const notes = [523, 659, 784, 1046];
     notes.forEach((n, i) => setTimeout(() => this.tone(n, 0.13, 'triangle', 0.13), i * 70));

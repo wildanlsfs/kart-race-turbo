@@ -289,7 +289,7 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
         if (msg.type === 'create_room') {
           leaveCurrentRoom();
           const code = makeRoomCode(rooms);
-          const driverId = DRIVERS.some((d) => d.id === msg.driverId) ? msg.driverId : 'bandi';
+          const driverId = DRIVERS.some((d) => d.id === msg.driverId) ? msg.driverId : 'rufus';
           const room = {
             code,
             trackId: msg.trackId || 'island',
@@ -325,7 +325,7 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
           }
           leaveCurrentRoom();
           const used = new Set(room.players.map((p) => p.driverId));
-          const fallbackDriver = DRIVERS.find((d) => !used.has(d.id))?.id || 'nitro';
+          const fallbackDriver = DRIVERS.find((d) => !used.has(d.id))?.id || 'jet';
           const driverId = DRIVERS.some((d) => d.id === msg.driverId) ? msg.driverId : fallbackDriver;
 
           room.players.push({

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `kart-race-turbo`, a 3D minimalist Crash Bandicoot-inspired kart racing game controlled by webcam body motions (plus keyboard/gamepad/touch) supporting Single Player, 2-Player Same-Device Split-Screen, and 4-Player Wi-Fi/LAN Multiplayer.
+**Goal:** Build `kart-race-turbo`, a 3D minimalist arcade-inspired kart racing game controlled by webcam body motions (plus keyboard/gamepad/touch) supporting Single Player, 2-Player Same-Device Split-Screen, and 4-Player Wi-Fi/LAN Multiplayer.
 
 **Architecture:** Static ES modules (`index.html`, `style.css`, `js/*.js`) rendering procedural toon-shaded 3D tracks and faceless karts via Three.js `0.160.0` (importmap), paired with a classic Web Worker (`js/pose-worker.js`) running MediaPipe Pose Landmarker `0.10.14` and a pure-logic motion & physics core testable with `node --test`. A zero-dependency Node.js HTTP + WebSocket server (`server.mjs`) serves the static app on `0.0.0.0:3000` and coordinates authoritative/synced LAN multiplayer rooms.
 
@@ -172,7 +172,7 @@ test('Kart physics accelerates, steers, charges and fires turbo, and prevents la
   const sim = new RaceSimulation({
     trackId: 'island',
     mode: '1p',
-    players: [{ id: 'p1', name: 'P1', driverId: 'bandi', isAI: false }],
+    players: [{ id: 'p1', name: 'P1', driverId: 'rufus', isAI: false }],
     totalLaps: 3,
   });
 
@@ -200,8 +200,8 @@ test('Smashing an item crate grants a weapon and punching fires a projectile or 
     trackId: 'island',
     mode: '1p',
     players: [
-      { id: 'p1', name: 'P1', driverId: 'bandi', isAI: false },
-      { id: 'ai1', name: 'Bot 1', driverId: 'nitro', isAI: true },
+      { id: 'p1', name: 'P1', driverId: 'rufus', isAI: false },
+      { id: 'ai1', name: 'Bot 1', driverId: 'jet', isAI: true },
     ],
     totalLaps: 3,
   });
@@ -232,7 +232,7 @@ Expected: FAIL with `ERR_MODULE_NOT_FOUND` for `../js/sim.js`
 
 - [ ] **Step 3: Implement `js/tracks.js` and `js/sim.js`**
 
-Implement Catmull-Rom closed track spline sampling (`getTrackPointAt(s)`, `getNearestTrackProgress(x, z)`), the 3 Crash-inspired tracks (*N. Sanity Island*, *Canyon Dash*, *Temple Ruins*), the 4 faceless driver presets, and `RaceSimulation` in `js/sim.js` (handling countdown, kart acceleration/braking/reverse, proportional steering + hop/drift boost charging, off-road grass slowdown, ordered checkpoint validation so reversing cannot increment laps, `?` item crates + Wumpa fruit pickups, 4 items, AI path-following + item usage, and race rankings).
+Implement Catmull-Rom closed track spline sampling (`getTrackPointAt(s)`, `getNearestTrackProgress(x, z)`), the 3 original circuits (*Palm Cove*, *Canyon Dash*, *Temple Ruins*), the 4 faceless driver presets, and `RaceSimulation` in `js/sim.js` (handling countdown, kart acceleration/braking/reverse, proportional steering + hop/drift boost charging, off-road grass slowdown, ordered checkpoint validation so reversing cannot increment laps, `?` item crates + Mango fruit pickups, 4 items, AI path-following + item usage, and race rankings).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -286,7 +286,7 @@ test('LAN server creates room, lists rooms on /api/lan-info, syncs race snapshot
     ]);
 
     const roomCreatedP = waitMsg(ws1, 'room_state');
-    ws1.send(JSON.stringify({ type: 'create_room', name: 'HostWildan', driverId: 'bandi', trackId: 'canyon' }));
+    ws1.send(JSON.stringify({ type: 'create_room', name: 'HostWildan', driverId: 'rufus', trackId: 'canyon' }));
     const created = await roomCreatedP;
     assert.equal(created.room.code.length, 4);
 
@@ -298,7 +298,7 @@ test('LAN server creates room, lists rooms on /api/lan-info, syncs race snapshot
 
     // Player 2 joins room
     const joinedP = waitMsg(ws2, 'room_state');
-    ws2.send(JSON.stringify({ type: 'join_room', code: created.room.code, name: 'Guest2', driverId: 'nitro' }));
+    ws2.send(JSON.stringify({ type: 'join_room', code: created.room.code, name: 'Guest2', driverId: 'jet' }));
     const joined = await joinedP;
     assert.equal(joined.room.players.length, 2);
 
@@ -347,13 +347,13 @@ Expected: PASS
   - `class SoundFX` in `js/audio.js`: WebAudio procedural sounds (`beep()`, `engineTick()`, `smashCrate()`, `pickupFruit()`, `turbo()`, `fireItem()`, `explosion()`, `lap()`, `victory()`) with mute toggle and zero audio files or background music.
   - `class RaceRenderer` in `js/renderer.js`:
     - Caps drawing buffer to `2,200,000` pixels with adaptive resolution scaling.
-    - Builds procedural toon-shaded track ribbon with red/white curbs, checkered start arch, boost pads, wooden `?` crates, Wumpa fruits, ramps, and themed environment props (palms/water for Island, sandstone arches/cacti for Canyon, stepped stone pillars/torches for Temple).
+    - Builds procedural toon-shaded track ribbon with red/white curbs, checkered start arch, boost pads, wooden `?` crates, Mango fruits, ramps, and themed environment props (palms/water for Island, sandstone arches/cacti for Canyon, stepped stone pillars/torches for Temple).
     - Builds procedural faceless driver + kart meshes with inverted-hull outlines, spinning wheels, steering wheel tilt, arm punch animation, turbo exhaust flames, shield bubble, and blob shadows.
     - Renders either single full-screen camera (`1p` / `lan`) or dual split-screen viewports (`2p` via `renderer.setViewport` / `renderer.setScissor`) with smooth anti-nausea damped spring cameras.
 
 - [ ] **Step 1: Implement `js/audio.js` and `js/renderer.js`**
 
-Follow `web-game-perf` rules: reuse shared geometries and toon materials, set `renderer.shadowMap.autoUpdate = false` (update once when track builds), use blob shadows on karts, and keep driver heads strictly faceless (`headgear`: Bandicoot Ears, Nitro Helmet, Tiki Feather Crown, Cortex Visor).
+Follow `web-game-perf` rules: reuse shared geometries and toon materials, set `renderer.shadowMap.autoUpdate = false` (update once when track builds), use blob shadows on karts, and keep driver heads strictly faceless (`headgear`: Fox Ears, Jet Helmet, Tiki Feather Crown, Volt Visor).
 
 - [ ] **Step 2: Verify module syntax and exports**
 

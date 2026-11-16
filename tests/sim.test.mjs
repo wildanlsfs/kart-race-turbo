@@ -17,7 +17,7 @@ test('Kart physics accelerates, steers, charges and fires turbo, and prevents la
   const sim = new RaceSimulation({
     trackId: 'island',
     mode: '1p',
-    players: [{ id: 'p1', name: 'P1', driverId: 'bandi', isAI: false }],
+    players: [{ id: 'p1', name: 'P1', driverId: 'rufus', isAI: false }],
     totalLaps: 3,
   });
 
@@ -45,8 +45,8 @@ test('Smashing an item crate grants a weapon and punching fires a projectile or 
     trackId: 'island',
     mode: '1p',
     players: [
-      { id: 'p1', name: 'P1', driverId: 'bandi', isAI: false },
-      { id: 'ai1', name: 'Bot 1', driverId: 'nitro', isAI: true },
+      { id: 'p1', name: 'P1', driverId: 'rufus', isAI: false },
+      { id: 'ai1', name: 'Bot 1', driverId: 'jet', isAI: true },
     ],
     totalLaps: 3,
   });
@@ -73,7 +73,7 @@ test('Kart approaching outer track edge deflects heading smoothly along track ta
   const sim = new RaceSimulation({
     trackId: 'island',
     mode: '1p',
-    players: [{ id: 'p1', name: 'P1', driverId: 'bandi', isAI: false }],
+    players: [{ id: 'p1', name: 'P1', driverId: 'rufus', isAI: false }],
     totalLaps: 3,
   });
   sim.countdown = 0;
@@ -106,7 +106,7 @@ test('Simulated human webcam player (with jitter and body-lean inertia) stays on
   const sim = new RaceSimulation({
     trackId: 'canyon',
     mode: '1p',
-    players: [{ id: 'p1', name: 'HumanSim', driverId: 'bandi', isAI: false }],
+    players: [{ id: 'p1', name: 'HumanSim', driverId: 'rufus', isAI: false }],
     totalLaps: 3,
     fillAI: false,
   });
@@ -153,4 +153,125 @@ test('Simulated human webcam player (with jitter and body-lean inertia) stays on
   assert.ok(minLateral < -2.0, `Expected human lean left to carve left (< -2.0m), got minLateral=${minLateral.toFixed(2)}`);
   assert.ok(maxLateral > 2.0, `Expected human lean right to carve right (> +2.0m), got maxLateral=${maxLateral.toFixed(2)}`);
   assert.ok(kart.totalProgress > 0.5, `Expected kart to advance smoothly along track, got progress=${kart.totalProgress.toFixed(2)}`);
+});
+
+const IDLE = { throttle: 1, brake: false, reverse: false, steer: 0, turbo: false, attack: false, hop: false };
+
+function steerToRoad(sim, k, extra = {}) {
+  const tp = sim.track.getPointAt(k.trackS + 0.03);
+  let d = Math.atan2(tp.x - k.x, tp.z - k.z) - k.heading;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return { ...IDLE, steer: Math.max(-1, Math.min(1, -d * 2)), ...extra };
+}
+
+test('AI-only races on every track: all karts finish close together and stay on the road', () => {
+  for (const t of TRACKS) {
+    const sim = new RaceSimulation({ trackId: t.id, players: [], totalLaps: 3, fillAI: true });
+    sim.karts.forEach((k) => { k.isAI = true; });
+    sim.countdown = 0;
+    sim.status = 'racing';
+    const offFrames = sim.karts.map(() => 0);
+    let frames = 0;
+    while (!sim.karts.every((k) => k.finished) && frames < 60 * 150) {
+      sim.step(1 / 60, {});
+      frames++;
+      sim.karts.forEach((k, i) => {
+        if (sim._findNearestSample(k.x, k.z).dist > t.roadWidth * 0.5 + 1.2) offFrames[i]++;
+      });
+    }
+    const times = sim.karts.map((k) => k.finishTimeSec);
+    assert.ok(times.every((x) => x !== null), `${t.id}: every AI should finish within 150s`);
+    const lo = Math.min(...times);
+    const hi = Math.max(...times);
+    assert.ok(hi / lo < 1.25, `${t.id}: AI spread too wide (${lo}s..${hi}s)`);
+    assert.ok(Math.max(...offFrames) < frames * 0.08, `${t.id}: an AI spent too long off-road (${Math.max(...offFrames)}/${frames})`);
+  }
+});
+
+test('Reverse input first brakes a moving kart; it only drives backwards once stopped', () => {
+  const sim = new RaceSimulation({ trackId: 'island', players: [{ id: 'p1', name: 'P', driverId: 'rufus' }], fillAI: false });
+  sim.countdown = 0;
+  sim.status = 'racing';
+  const k = sim.karts[0];
+  k.speed = 25;
+  for (let i = 0; i < 10; i++) sim.step(1 / 60, { p1: { ...IDLE, throttle: 0, brake: true, reverse: true } });
+  assert.ok(k.speed > 0, `Kart should still be moving forward after 10 frames of brake, speed=${k.speed}`);
+  for (let i = 0; i < 180; i++) sim.step(1 / 60, { p1: { ...IDLE, throttle: 0, brake: true, reverse: true } });
+  assert.ok(k.speed < 0, 'Kart should be reversing after holding brake until stopped');
+});
+
+test('Homing rocket ignores karts behind it', () => {
+  const sim = new RaceSimulation({
+    trackId: 'island',
+    players: [{ id: 'p1', name: 'P', driverId: 'rufus' }, { id: 'ai1', name: 'B', driverId: 'jet', isAI: true }],
+    fillAI: false,
+  });
+  sim.countdown = 0;
+  sim.status = 'racing';
+  const [me, bot] = sim.karts;
+  bot.x = me.x - Math.sin(me.heading) * 12;
+  bot.z = me.z - Math.cos(me.heading) * 12;
+  me.heldItem = 'rocket';
+  sim.step(1 / 60, { p1: { ...IDLE, attack: true } });
+  const proj = sim.projectiles[0];
+  const h0 = proj.heading;
+  for (let i = 0; i < 20; i++) sim.step(1 / 60, { p1: IDLE });
+  const p = sim.projectiles[0];
+  if (p) assert.ok(Math.abs(p.heading - h0) < 0.01, 'rocket must not turn around to chase a kart behind it');
+  assert.equal(bot.spinOutTimer, 0, 'kart behind should not be hit by a forward rocket');
+});
+
+test('A kart that was just hit cannot be chain-spun, and turbo cannot be held on forever', () => {
+  const sim = new RaceSimulation({ trackId: 'island', players: [{ id: 'p1', name: 'P', driverId: 'rufus' }], fillAI: false });
+  sim.countdown = 0;
+  sim.status = 'racing';
+  const k = sim.karts[0];
+  assert.equal(sim._applyHit(k, 'x'), true);
+  const t = k.spinOutTimer;
+  assert.equal(sim._applyHit(k, 'x'), false, 'second hit during spin-out/invulnerability must be ignored');
+  assert.equal(k.spinOutTimer, t);
+
+  const sim2 = new RaceSimulation({ trackId: 'island', players: [{ id: 'p1', name: 'P', driverId: 'rufus' }], fillAI: false });
+  sim2.countdown = 0;
+  sim2.status = 'racing';
+  const k2 = sim2.karts[0];
+  k2.turboCharge = 100;
+  for (let i = 0; i < 60 * 10; i++) sim2.step(1 / 60, { p1: steerToRoad(sim2, k2, { turbo: true }) });
+  assert.ok(k2.statsSummary.turbosUsed <= 4, `turbo used ${k2.statsSummary.turbosUsed} times in 10s; should be limited by charge`);
+});
+
+test('Race stays live for ~3s after the last human finishes, then ends; humans start at the back of the grid', () => {
+  const sim = new RaceSimulation({ trackId: 'island', players: [{ id: 'p1', name: 'P', driverId: 'rufus' }], totalLaps: 3 });
+  const me = sim.karts[0];
+  for (const o of sim.karts.slice(1)) {
+    const along = (o.x - me.x) * Math.sin(me.heading) + (o.z - me.z) * Math.cos(me.heading);
+    assert.ok(along > -1, 'no AI kart should start behind the human (it would sit in the chase camera)');
+  }
+  sim.countdown = 0;
+  sim.status = 'racing';
+  me.finished = true;
+  me.finishTimeSec = 1;
+  sim.step(1 / 60, {});
+  assert.equal(sim.status, 'racing');
+  for (let i = 0; i < 60 * 3.2; i++) sim.step(1 / 60, {});
+  assert.equal(sim.status, 'finished');
+});
+
+test('Keeping a road-following keyboard player vs 3 AI: player finishes within 15% of the AI pack on all tracks', () => {
+  for (const t of TRACKS) {
+    const sim = new RaceSimulation({ trackId: t.id, players: [{ id: 'p1', name: 'P', driverId: 'rufus' }], totalLaps: 3 });
+    sim.countdown = 0;
+    sim.status = 'racing';
+    const k = sim.karts[0];
+    let frames = 0;
+    while (sim.status !== 'finished' && frames < 60 * 200) {
+      sim.step(1 / 60, { p1: steerToRoad(sim, k) });
+      frames++;
+    }
+    const aiTimes = sim.karts.slice(1).map((x) => x.finishTimeSec).filter(Boolean);
+    assert.ok(k.finished, `${t.id}: player must finish`);
+    const best = aiTimes.length ? Math.min(...aiTimes) : k.finishTimeSec;
+    assert.ok(k.finishTimeSec < best * 1.15, `${t.id}: player ${k.finishTimeSec}s vs best AI ${best}s is not competitive`);
+  }
 });

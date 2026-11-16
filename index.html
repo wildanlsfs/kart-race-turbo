@@ -14,7 +14,7 @@
     }
   </script>
 </head>
-<body data-screen="menu">
+<body data-screen="menu" data-mode="1p">
   <canvas id="game-canvas" aria-label="3D Kart Race World"></canvas>
 
   <!-- Split-Screen Center Divider (2P Mode) -->
@@ -24,16 +24,16 @@
   <header id="top-bar">
     <div class="top-actions">
       <button id="btn-auto-gas" class="pill-btn active" type="button" title="Toggle Auto-Gas vs Manual Wheel-Stance">
-        ⚡ Auto-Gas: ON
+        <span class="ico">⚡</span><span class="lbl">Auto-Gas: ON</span>
       </button>
       <button id="btn-comfort" class="pill-btn active" type="button" title="Smooth Anti-Nausea Camera">
-        🌀 Comfort
+        <span class="ico">🌀</span><span class="lbl">Comfort: ON</span>
       </button>
       <button id="btn-sound" class="pill-btn" type="button" title="Toggle Sound Effects">
-        🔊 SFX
+        <span class="ico">🔊</span><span class="lbl">SFX</span>
       </button>
       <button id="btn-menu-return" class="pill-btn hidden" type="button">
-        🏠 Menu
+        <span class="ico">🏠</span><span class="lbl">Menu</span>
       </button>
     </div>
   </header>
@@ -54,6 +54,7 @@
   <!-- Race HUD -->
   <section id="race-hud" class="modal-layer hidden" aria-live="polite">
     <div id="countdown-banner" class="countdown-banner hidden">3</div>
+    <div id="event-banner" class="event-banner hidden" aria-live="assertive"></div>
 
     <div class="hud-panels">
       <!-- Player 1 HUD -->
@@ -61,7 +62,7 @@
         <div class="pill-row">
           <div class="hud-pill rank" id="p1-rank">1st</div>
           <div class="hud-pill" id="p1-lap">LAP 1/3</div>
-          <div class="hud-pill wumpa" id="p1-wumpa">🟠 0/10</div>
+          <div class="hud-pill mango" id="p1-mango">🟠 0/10</div>
           <div class="hud-pill speed"><span id="p1-speed">0</span> <small>km/h</small></div>
         </div>
         <div class="pill-row">
@@ -71,7 +72,7 @@
         <div class="energy-bar-wrap">
           <div class="energy-bar">
             <div id="p1-turbo-fill" class="energy-fill" style="width:45%"></div>
-            <span class="energy-label">🚀 TURBO <b id="p1-turbo-pct">45%</b> — Raise Both Hands!</span>
+            <span class="energy-label">🚀 TURBO <b id="p1-turbo-pct">45%</b> <em id="p1-turbo-hint">· both hands up / Space</em></span>
           </div>
         </div>
       </div>
@@ -86,7 +87,7 @@
         <div class="pill-row">
           <div class="hud-pill rank" id="p2-rank">2nd</div>
           <div class="hud-pill" id="p2-lap">LAP 1/3</div>
-          <div class="hud-pill wumpa" id="p2-wumpa">🟠 0/10</div>
+          <div class="hud-pill mango" id="p2-mango">🟠 0/10</div>
           <div class="hud-pill speed"><span id="p2-speed">0</span> <small>km/h</small></div>
         </div>
         <div class="pill-row">
@@ -249,7 +250,7 @@
         <div class="room-code-banner">
           <span>ROOM CODE:</span>
           <strong id="room-code-display">KART</strong>
-          <span id="room-track-display" class="track-tag">N. Sanity Island</span>
+          <span id="room-track-display" class="track-tag">Palm Cove</span>
         </div>
         <h3>Connected Racers (Remaining slots filled by AI Bots):</h3>
         <div id="room-players-list" class="room-players-list"></div>

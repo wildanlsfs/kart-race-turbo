@@ -7,7 +7,7 @@
 
 ## 1. Intent & Why
 
-Build **Kart Race Turbo**, a clean, smooth 3D minimalist multiplayer kart racing game inspired by *Crash Team Racing* (*Crash Bandicoot* series), controlled via **webcam body motions** (plus keyboard/gamepad/touch fallback). Players can play **Single Player** (vs. AI bots), **Same-Device 2-Player Split-Screen** (sharing one webcam or keyboard/gamepads), or **Wi-Fi / LAN Multiplayer** across devices on the same local network.
+Build **Kart Race Turbo**, a clean, smooth 3D minimalist multiplayer kart racing game inspired by classic arcade kart racers , controlled via **webcam body motions** (plus keyboard/gamepad/touch fallback). Players can play **Single Player** (vs. AI bots), **Same-Device 2-Player Split-Screen** (sharing one webcam or keyboard/gamepads), or **Wi-Fi / LAN Multiplayer** across devices on the same local network.
 
 The goal is an energetic, physical party/arcade game that runs smoothly at 60 FPS in modern browsers without motion sickness, lag, or tiring players out.
 
@@ -20,10 +20,10 @@ The goal is an energetic, physical party/arcade game that runs smoothly at 60 FP
   1. **Single Player:** 1 human player + 3 AI karts on a 3-lap circuit race.
   2. **2-Player Same Device (Split-Screen):** 2 human players + 2 AI karts on horizontal/vertical split-screen. Supports 2-player simultaneous webcam tracking (left half of camera frame = Player 1, right half = Player 2) as well as P1/P2 keyboard & gamepad controls.
   3. **Wi-Fi / LAN Multiplayer (Same Network):** Up to 4 players across laptops/phones/tablets on the same Wi-Fi/LAN via a lightweight Node.js static + WebSocket server (`npm run server` binding to `0.0.0.0:3000` with 4-letter room code and LAN URL / QR display, remaining open slots filled by AI bots if desired).
-- **Crash-Inspired Kart Mechanics:**
+- **Arcade Kart Mechanics:**
   - Responsive arcade kart physics: forward acceleration, braking/reversing, proportional left/right steering, hopping/drifting around corners, turbo boost pads on the track, and a rechargeable Turbo gauge.
-  - Smashable wooden `?` Item Crates & Wumpa-style energy fruits scattered along the track.
-  - 4 iconic Crash-style weapons/items triggered by punching forward:
+  - Smashable wooden `?` Item Crates & mango energy fruits scattered along the track.
+  - 4 iconic arcade-style weapons/items triggered by punching forward:
     1. **Homing Rocket (Missile):** Locks onto and chases the kart ahead.
     2. **Bowling Bomb:** Rolls forward in a straight line and explodes on impact.
     3. **TNT / Hazard Crate:** Dropped behind the kart to spin out tailgaters.
@@ -35,7 +35,7 @@ The goal is an energetic, physical party/arcade game that runs smoothly at 60 FP
   - **Turbo Boost:** Raise both hands above shoulders/nose (or jump/hop) when the Turbo gauge has >= 30% charge.
   - **Attack / Use Item:** Punch forward with either left or right hand (rapid wrist velocity/extension toward camera or away from shoulder).
 - **Clean Minimalist 3D Visuals & Audio:**
-  - Procedural 3D toon-shaded karts, faceless drivers (no eyes, mouths, or face lines), crisp inverted-hull outlines, vibrant canyon/jungle/island track aesthetics (Crash Bandicoot inspired colors: warm sandstone, emerald grass, striped red-white curbs, wooden crates, green boost pads, checkered arches).
+  - Procedural 3D toon-shaded karts, faceless drivers (no eyes, mouths, or face lines), crisp inverted-hull outlines, vibrant canyon/jungle/island track aesthetics (warm sandstone, emerald grass, striped red-white curbs, wooden crates, green boost pads, checkered arches).
   - Synthesized WebAudio sound effects (engine hum, drift skid, crate smash, turbo whoosh, missile launch, explosion, countdown beeps, lap fanfare) with **no background music**.
 
 ### Non-Goals
@@ -75,17 +75,17 @@ The goal is an energetic, physical party/arcade game that runs smoothly at 60 FP
 ## 4. User-Decided vs. Builder's Calls
 
 ### Decided by User
-- **Genre & Inspiration:** 3D minimalist multiplayer racing game inspired by Crash Bandicoot (specifically driving vehicles/karts).
+- **Genre & Inspiration:** 3D minimalist multiplayer racing game inspired by classic arcade kart racers (specifically driving vehicles/karts).
 - **Game Modes:** Single Player, Same-Device Multiplayer, and Wireless Wi-Fi/LAN Multiplayer on the same network.
 - **Core Actions & Motion Mapping:** Move Forward (Smart Auto-Drive default + optional manual stance), Backward/Brake (pull hands to chest / crouch), Turn Left / Right (invisible steering wheel tilt + body lean), Turbo (both hands up / hop), Attack (punch forward).
 - **Project Name:** `kart-race-turbo`.
 
 ### Builder's Calls (Sensible Defaults)
-- **Track Selection *(Builder's Call)*:** 3 distinct Crash-themed minimalist circuits selectable in Single Player, Split-Screen, and LAN Lobby:
-  1. *N. Sanity Island* (sunny tropical beach, palm trees, wooden bridges, gentle curves)
+- **Track Selection *(Builder's Call)*:** 3 distinct original-themed minimalist circuits selectable in Single Player, Split-Screen, and LAN Lobby:
+  1. *Palm Cove* (sunny tropical beach, palm trees, wooden bridges, gentle curves)
   2. *Canyon Dash* (desert sandstone mesa, sharp hairpins, turbo jump ramps)
   3. *Temple Ruins* (ancient stone temple, wide split paths, extra item crates & boost pads)
-- **Kart Roster *(Builder's Call)*:** 4 selectable faceless drivers & kart color/stat styles (Balanced, Speed, Turn, Accel) with distinct procedural helmets/ears/hats (e.g., Bandicoot Ears, Cortex Visor, Tiki Mask, Nitro Helmet—all strictly faceless).
+- **Kart Roster *(Builder's Call)*:** 4 selectable faceless drivers & kart color/stat styles (Balanced, Speed, Turn, Accel) with distinct procedural helmets/ears/hats (e.g., Fox Ears, Volt Visor, Tiki Crown, Jet Helmet—all strictly faceless).
 - **LAN Protocol *(Builder's Call)*:** Host creates a 4-letter room code on the LAN server; any device opening `http://<LAN-IP>:3000` sees active LAN rooms on the same Wi-Fi (one-tap join or enter 4-letter code). Each player can use their own device's webcam, keyboard, or touch controls during the LAN race.
 - **Verification & Debug Hooks *(Builder's Call)*:** Built-in `window.__game` test API (`injectPose`, `startMode`, `getState`, `getMetrics`) for automated headless verification alongside real webcam play.
 
