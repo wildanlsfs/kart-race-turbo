@@ -14,8 +14,9 @@ export function cellKey(x, z, size) {
 
 // Dynamic-resolution controller. Feed it every racing frame's raw frame time; it returns a new
 // render scale when it wants a change, otherwise null.
-//  - fps comes from the MEDIAN frame time of a sliding window (robust to hitches, unbiased by
-//    the 1/dt averaging that skewed high before);
+//  - fps = 1000 / mean frame time over a sliding window (true frames-per-second; each frame is
+//    clamped to maxFrameMs so one hitch cannot dominate, but stutter still counts - a median
+//    would report 60 for a game that drops every third frame);
 //  - steps down below downFps, up from upFps (gap = hysteresis, tablets at 50-56 fps recover);
 //  - at most one change per cooldownMs, so the picture does not hunt;
 //  - anti-hunt memory: if a step down follows a step up within huntMs, the scale we just left
@@ -32,6 +33,7 @@ export class AdaptiveScale {
     this.windowSize = opts.windowSize ?? 45;
     this.warmupMs = opts.warmupMs ?? 1500;
     this.huntMs = opts.huntMs ?? 8000;
+    this.maxFrameMs = opts.maxFrameMs ?? 100;
     this.ceilingMs = opts.ceilingMs ?? 30000;
     this.scale = opts.initial ?? this.max;
     this.reset();
@@ -48,15 +50,16 @@ export class AdaptiveScale {
   }
 
   get fps() {
-    const m = median(this.frames);
-    return m > 0 ? 1000 / m : 0;
+    if (!this.frames.length) return 0;
+    const mean = this.frames.reduce((a, b) => a + b, 0) / this.frames.length;
+    return 1000 / mean;
   }
 
   update(dtMs, nowMs) {
     if (this.startMs === null) this.startMs = nowMs;
     // ignore absurd pauses (tab hidden, debugger) rather than treating them as slow frames
     if (dtMs > 0 && dtMs < 500) {
-      this.frames.push(dtMs);
+      this.frames.push(Math.min(dtMs, this.maxFrameMs));
       if (this.frames.length > this.windowSize) this.frames.shift();
     }
     if (nowMs - this.startMs < this.warmupMs || this.frames.length < this.windowSize * 0.6) return null;

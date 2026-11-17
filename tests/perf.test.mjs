@@ -71,7 +71,14 @@ test('cpu-bound case (resolution does not help) does not oscillate: ceiling is l
   assert.ok(late.length <= 4, 'few changes late in the run: ' + JSON.stringify(trace));
 });
 
-test('hitches (single long frames) do not move the median', () => {
+test('a game that drops every third frame (stutter) counts as slow even though the median frame is fast', () => {
+  const c = new AdaptiveScale();
+  let n = 0;
+  const { trace } = run(c, 15000, () => (++n % 3 === 0 ? 50 : 16.7)); // mean 27.8 ms = 36 fps
+  assert.ok(trace.length >= 1 && trace[0][1] < 1);
+});
+
+test('hitches (single long frames) do not move the scale', () => {
   const c = new AdaptiveScale();
   let n = 0;
   const { trace } = run(c, 30000, () => (++n % 40 === 0 ? 300 : 16.7));
