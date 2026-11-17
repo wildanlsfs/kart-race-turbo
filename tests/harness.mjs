@@ -30,7 +30,7 @@ function wantsToFire(sim, k) {
 // controller (what a good player does with the pad), uses turbo on straights, fires items now and then.
 // `lane` shifts the aimed line (metres, right positive), `lift` lets it brake for very sharp bends.
 export function competentBot(sim, k, { rng = Math.random, turbo = true, lane = 0, lift = false } = {}) {
-  const look = 0.028 + Math.max(0, k.speed) * 0.0011;
+  const look = (5 + Math.max(0, k.speed) * 0.45) / sim.track.totalLength; // metres ahead on the centre line
   const tp = sim.track.getPointAt(k.trackS + look);
   const tx = tp.x + tp.rx * lane;
   const tz = tp.z + tp.rz * lane;

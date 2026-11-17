@@ -46,7 +46,7 @@ const CORNER_DRAG = 0.014; // speed scrubbed per unit of lateral acceleration (b
 export const WHEEL_MAX_DEG = 60;
 export const TIRE_MAX = (28 * Math.PI) / 180;
 export const WHEELBASE = 2.4;
-const GRIP_LAT = 16;
+const GRIP_LAT = 24;
 const UNDERSTEER_SCRUB = 0.9;
 // Steer value (-1..1) that yields a wanted yaw rate (rad/s, positive = heading decreasing = turning right) at the kart's speed.
 export function steerForYaw(kart, yawWanted) {
@@ -217,7 +217,7 @@ export class RaceSimulation {
 
   _computeAIInput(kart, dt) {
     const halfRoad = this.track.roadWidth * 0.5;
-    const look = 0.028 + Math.max(0, kart.speed) * 0.0011;
+    const look = (5 + Math.max(0, kart.speed) * 0.45) / this.track.totalLength; // metres ahead
     const targetPt = this.track.getPointAt(kart.trackS + look);
     const off = clamp(kart.aiTargetOffset + Math.sin(this.elapsedSec * 0.35 + kart.aiWander) * 1.2, -(halfRoad - 3.2), halfRoad - 3.2);
     const tx = targetPt.x + targetPt.rx * off;
@@ -229,7 +229,7 @@ export class RaceSimulation {
     if (this.diff.mistakeRate > 0) {
       if (kart.aiMistakeT > 0) {
         kart.aiMistakeT -= dt;
-        steer = clamp(steer + kart.aiMistakeDir * 0.75, -1, 1);
+        steer = clamp(steer + kart.aiMistakeDir * 0.3, -1, 1);
       } else if (this.rng() < this.diff.mistakeRate * dt && kart.speed > 12) {
         kart.aiMistakeT = 0.5 + this.rng() * 0.5;
         kart.aiMistakeDir = this.rng() < 0.5 ? -1 : 1;

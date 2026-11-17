@@ -32,7 +32,7 @@ Steering is real turning: nothing drives the kart for you except a short soft ba
 | Body Motion | Action | P1 Keyboard | P2 Keyboard |
 |---|---|---|---|
 | **Auto-Drive (or hold hands in wheel zone)** | Accelerate forward | `W` / Auto | `↑` / Auto |
-| **Tilt invisible steering wheel / Lean left or right** | Proportional steering | `A` / `D` | `←` / `→` |
+| **Tilt invisible steering wheel / Lean left or right** | Steering wheel angle, up to 60 degrees each way (the front tyres follow) | `A` / `D` | `←` / `→` |
 | **Pull both hands to chest / Crouch** | Brake (hold to Reverse) | `S` | `↓` |
 | **Raise both hands overhead (or hop)** | Fire Turbo Boost | `Space` | `Right Shift` |
 | **Punch forward with either hand** | Fire Crate Weapon (Rocket, Bomb, TNT, Shield) | `F` / `E` | `Enter` / `K` |
@@ -40,7 +40,8 @@ Steering is real turning: nothing drives the kart for you except a short soft ba
 ### Other keys and touch
 
 - `Esc` or `P` pauses a local race (Resume / Restart / Main Menu). The Menu button also pauses first. Pausing is not available in Wi-Fi/LAN races.
-- On touch devices (tablet or phone) the bottom-left is a big steering pad: put a thumb on it and slide left or right; how far from the middle you are is how hard you steer (a light touch near the middle is a gentle turn, the edge is full lock; lift to go straight). Bottom-right has large BRAKE, TURBO and PUNCH buttons (PUNCH fires the held item). A finger that slides off a pad or button keeps holding it. Multi-touch works, so steer with one thumb while the other holds TURBO. Portrait works but landscape gives a wider view.
+- **Steering is a wheel position, not a rate.** The wheel turns at most 60 degrees left or right and the front tyres follow it (about 28 degrees at full lock); the wheel icon in the HUD (one per player) shows the angle. Keyboard: holding an arrow turns the wheel at about 200 degrees per second up to 60 and it returns to centre when released. Webcam: the angle of the line between your two hands (an invisible wheel) is the wheel angle 1:1, or your body lean in the same units; a small dead zone and anti-jitter filter remain. Touch: a virtual wheel at the bottom-left; put a finger on it and drag around its centre, the wheel turns by the angle your finger sweeps (clamped to 60 degrees), and springs back to centre when you lift. A finger that slides off keeps steering. At high speed full lock is limited by grip (understeer) and costs speed; each racer's Handling stat sets that limit.
+- On touch devices bottom-right has large BRAKE, TURBO and PUNCH buttons (PUNCH fires the held item). Multi-touch works, so steer with one thumb while the other holds TURBO. Portrait works but landscape gives a wider view.
 - Comfort mode (top bar) calms the camera: slower follow, smaller field-of-view change, no shake.
 
 ## Racers

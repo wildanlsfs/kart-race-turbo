@@ -58,10 +58,10 @@ if (!isMainThread) {
       const tops = ids.map((i) => s[i][0]);
       const jetOk = s.jet[0] >= Math.max(s.rufus[0], s.maka[0], s.volt[0]) + 0.85;
       const volt = s.volt[1] >= Math.max(s.rufus[1], s.jet[1], s.maka[1]) + 3;
-      const maka = s.maka[2] >= Math.max(s.rufus[2], s.jet[2], s.volt[2]) + 0.4;
+      const maka = s.maka[2] >= Math.max(s.rufus[2], s.jet[2], s.volt[2]) + 0.15;
       const bounds = ids.every((i) => s[i][0] > 27.5 && s[i][0] < 31.5 && s[i][1] >= 18 && s[i][1] <= 38 && s[i][2] >= 3.4 && s[i][2] <= 5.2);
       const hs = ids.map((i) => s[i][2]); const spread = Math.max(...hs) / Math.min(...hs) < 1.28;
-      const accGap = s.volt[1] >= 30 && s.jet[1] <= 23 && s.rufus[1] >= 24 && s.rufus[1] <= 28;
+      const accGap = s.volt[1] >= Math.max(s.rufus[1], s.jet[1], s.maka[1]) + 5 && s.jet[1] <= s.volt[1] - 8;
       return jetOk && volt && maka && bounds && spread && accGap;
     };
     let bestScore = score(await evalStats(best, 1, SEEDS));

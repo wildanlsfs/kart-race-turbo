@@ -11,7 +11,7 @@ export const DRIVERS = [
     accent: '#facc15',
     headgear: 'ears', // Pointed fox ears (faceless)
     ai: { skill: 1.0, lane: -0.4 },
-    stats: { topSpeed: 29.3, accel: 26.88, handling: 4.1, boostBonus: 12 },
+    stats: { topSpeed: 29.3, accel: 25, handling: 4.1, boostBonus: 12 },
   },
   {
     id: 'jet',
@@ -23,7 +23,7 @@ export const DRIVERS = [
     accent: '#a3e635',
     headgear: 'helmet', // Aero racing helmet (faceless)
     ai: { skill: 1.0, lane: 0.3 },
-    stats: { topSpeed: 30.2, accel: 22, handling: 4.27, boostBonus: 12 },
+    stats: { topSpeed: 30.2, accel: 22, handling: 4.5, boostBonus: 12 },
   },
   {
     id: 'maka',
@@ -47,7 +47,7 @@ export const DRIVERS = [
     accent: '#38bdf8',
     headgear: 'visor', // Tech dome visor (faceless)
     ai: { skill: 1.0, lane: -0.2 },
-    stats: { topSpeed: 28.64, accel: 30, handling: 3.8, boostBonus: 12 },
+    stats: { topSpeed: 28.8, accel: 31, handling: 3.8, boostBonus: 12 },
   },
 ];
 
@@ -259,7 +259,7 @@ const RAW_TRACKS = [
     tag: 'Technical',
     length: 'Long',
     mechanic: 'Hairpins and 4 jump ramps on a narrow road',
-    roadWidth: 10.5,
+    roadWidth: 13.5,
     theme: {
       skyTop: '#fb923c',
       skyBottom: '#fde68a',
@@ -316,7 +316,7 @@ const RAW_TRACKS = [
     tag: 'Speed',
     length: 'Medium',
     mechanic: 'Long straights, chicanes and 8 boost pads',
-    roadWidth: 13,
+    roadWidth: 15.5,
     theme: {
       skyTop: '#1e1b4b',
       skyBottom: '#4338ca',
