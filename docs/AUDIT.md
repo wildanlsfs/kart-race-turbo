@@ -119,6 +119,8 @@ Checked one by one:
 
 So: lap time -9 % (follow) and -20 % (weave) against the old buttons, kerb riding from 13.7 % to 0.2 % (follow). Lane accuracy in weave is about the same as a keyboard and better than the old buttons. The bot is a model of a thumb, not a person; the pad numbers assume the player places the finger sensibly. A node-only check shows the same trend (`tests/touchsteer.test.mjs` drives a canyon lap with the pad model).
 
+Other viewports (Canyon, 1 seed, old buttons vs new pad): 1180x820 follow 29.0 s / kerb 16 % vs 25.1 s / 0 %, weave 34.0 s vs 28.1 s; 768x1024 portrait follow 27.0 s / 17.2 % vs 25.3 s / 0 %, weave 34.5 s vs 28.1 s. All 0 off-road, 0 wall hits.
+
 ## L. Still weak / not verified
 - No real tablet, no real thumbs; whether the pad position mapping feels natural (finger at centre = straight, a thumb that lands at the pad edge = full lock at once) needs a hand test. The dead zone and the 80 % full-lock point are guesses.
 - Long-press context menu, iOS Safari pointer-capture behaviour and double-tap zoom could not be tested.
