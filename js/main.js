@@ -8,6 +8,7 @@ import { RaceRenderer } from './renderer.js';
 import { SoundFX } from './audio.js';
 import { LanClient } from './net.js';
 import { SteerPad } from './touchsteer.js';
+import { AdaptiveScale } from './perf.js';
 
 const ITEM_LABELS = {
   rocket: '🚀 ROCKET',
@@ -1054,9 +1055,10 @@ const debugPanelEl = document.getElementById('debug-panel');
 if (isDebug) debugPanelEl.classList.remove('hidden');
 
 let lastFrameMs = performance.now();
-let fpsAccum = 0;
 let fpsFrames = 0;
 let lastFpsCheckMs = performance.now();
+const adaptiveRes = new AdaptiveScale();
+let lastRacingMs = 0;
 
 function animate(nowMs) {
   requestAnimationFrame(animate);
@@ -1068,16 +1070,19 @@ function animate(nowMs) {
   lastFrameMs = nowMs;
   const dt = Math.min(0.05, Math.max(0.001, rawDt));
 
-  fpsAccum += 1 / dt;
+  // Displayed FPS: frames per second over the last half second (true rate, no 1/dt averaging).
   fpsFrames += 1;
   if (nowMs - lastFpsCheckMs > 500) {
-    state.fps = Math.round(fpsAccum / Math.max(1, fpsFrames));
-    fpsAccum = 0;
+    state.fps = Math.round(fpsFrames * 1000 / (nowMs - lastFpsCheckMs));
     fpsFrames = 0;
     lastFpsCheckMs = nowMs;
-    if (state.screen === 'racing') {
-      renderer.adjustResolutionForFps(state.fps);
-    }
+  }
+  // Dynamic resolution: only while actually racing; restart the window after menu/pause time.
+  if (state.screen === 'racing' && !state.paused) {
+    if (nowMs - lastRacingMs > 250) adaptiveRes.reset();
+    lastRacingMs = nowMs;
+    const next = adaptiveRes.update(rawDt * 1000, nowMs);
+    if (next !== null) renderer.setAdaptiveScale(next);
   }
 
   const activePoses = state.syntheticPoses || state.latestPoses;
