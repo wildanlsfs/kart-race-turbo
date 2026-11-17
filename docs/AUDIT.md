@@ -227,3 +227,24 @@ All runs: 0 console errors, 0 page errors. Software GL, so frame rates are low (
 - **Idle** (the page gets no input at all for a whole 1-lap race; the in-game auto-gas stays on): Palm Cove with Jet: 4th, did not finish (AIs 28-32 s); Canyon with Maka: 4th, 84.3 s vs 46.7 s for the winner; Temple with Rufus: 4th, 52.0 s vs 33.5 s. Node version over 12 track x driver cells and 2 seeds each: always 4th (`tests/fairness.test.mjs`).
 - **Keyboard only and misc**: Enter / arrows / Esc navigate the wizard, last choices survive a reload (racer, circuit, difficulty, laps), Esc and P pause, Resume / Restart / Main Menu work, Main Menu returns to step 1.
 - Screenshots of every wizard step at tablet (1024x768), desktop (1366x768) and phone landscape (844x390): `docs/screens/flow/wizard_*`. I looked at them. Tablet and desktop were fine on first look; on the 844x390 phone the racer-step title sat on the first row of cards, which was fixed (compact racer cards below 480 px height) and re-checked.
+
+## P. Balance (before / after) and idle rank
+Win share, 4 drivers driven by the same controller, random start slots, Normal difficulty. Before = commit 0b3231c sim (AI x4, 30 seeds, scripted); after = this branch, seeds 101-200 (held out from the tuning seeds 1-48).
+
+| field | track | Rufus | Jet | Maka | Volt |
+|---|---|---|---|---|---|
+| before, AI x4 | Palm Cove | 100% | 0% | 0% | 0% |
+| before, AI x4 | Canyon | 3% | 53% | 20% | 23% |
+| before, AI x4 | Temple | 73% | 17% | 10% | 0% |
+| after, bot x4 | Palm Cove | 32% | 40% | 22% | 6% |
+| after, bot x4 | Canyon | 28% | 0% | 32% | 40% |
+| after, bot x4 | Temple | 25% | 7% | 19% | 49% |
+| after, bot x4 | overall | 28% | 16% | 24% | 32% |
+| after, AI x4 | overall | 35% | 13% | 22% | 30% |
+
+Winner by start slot after: 38/21/27/14 % (bot), 37/23/26/14 % (AI); before the front-row kart won 50 %+.
+Stats now (top / accel / handling): Rufus 29.3 / 26.9 / 4.1, Jet 30.2 / 22 / 4.27, Maka 29.3 / 25 / 4.7, Volt 28.64 / 30 / 3.8.
+
+**Gates NOT met (honest status).** `tests/balance.test.mjs` (15 % per track, 35 % overall, per bot and AI field) fails on held-out seeds: bot field Jet wins 0 % on Canyon; AI field Jet 13 % overall. Gates were not loosened. Four tuning runs (random hill climb, `tools/tune.mjs`) plus manual sweeps did not find stats satisfying the gates together with the existing Volt acceleration test and the 1.3x handling band. Evidence: solo lap times can be equalised to within about 1-2 % on all tracks (`tools/sweep.mjs`), but in a 4-kart field results depend on traffic, items and contact, and a high-top-speed / low-grip kart (Jet) is systematically hurt on the narrow Canyon (10.5 m road); making Jet win there requires either more grip (breaks the identity band) or a faster top speed (then Palm Cove > 35 %). Not proven infeasible; a track-specific stat or a wider Canyon is the likely fix, which changes design and is left to the owner.
+
+**Idle rank** (auto-gas, zero steering, vs 3 AI): before, 2nd-4th (always 2nd on Canyon/Temple); after 4th in all 12 track x driver cells x 2 seeds (`tests/fairness.test.mjs`) and in the 3 real-page runs (Palm Cove did not finish; Canyon 84.3 s vs 46.7 s; Temple 52.0 s vs 33.5 s).

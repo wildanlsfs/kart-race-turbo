@@ -92,7 +92,7 @@ export class RaceSimulation {
     this.karts = roster.map((p, idx) => {
       const driver = DRIVERS.find((d) => d.id === p.driverId) || DRIVERS[idx % DRIVERS.length];
       const slot = slotOf.get(p);
-      const rowBack = Math.floor(slot / 2) * 5.0;
+      const rowBack = Math.floor(slot / 2) * 3.2;
       const laneOffset = (slot % 2 === 0 ? -1 : 1) * 2.6;
       const x = startPt.x + startPt.rx * laneOffset - startPt.tx * rowBack;
       const z = startPt.z + startPt.rz * laneOffset - startPt.tz * rowBack;
@@ -157,6 +157,7 @@ export class RaceSimulation {
       ...f,
       active: true,
       respawnTimer: 0,
+      cool: {},
     }));
 
     this.projectiles = [];
@@ -337,11 +338,16 @@ export class RaceSimulation {
         if (c.respawnTimer <= 0) c.active = true;
       }
     }
+    // Mango is per kart: each kart collects its own copy (and waits 8 s for the next), so the kart that
+    // happens to be in front cannot snowball a top-speed bonus. A mango disappears from the scene
+    // once every human (or every kart, in an AI-only race) has taken it.
     for (const f of this.fruits) {
-      if (!f.active) {
-        f.respawnTimer -= dt;
-        if (f.respawnTimer <= 0) f.active = true;
+      for (const id of Object.keys(f.cool)) {
+        f.cool[id] -= dt;
+        if (f.cool[id] <= 0) delete f.cool[id];
       }
+      const viewers = this.karts.some((k) => !k.isAI) ? this.karts.filter((k) => !k.isAI) : this.karts;
+      f.active = viewers.some((k) => !(f.cool[k.id] > 0));
     }
 
     // Update each kart
@@ -582,10 +588,9 @@ export class RaceSimulation {
 
       // Check Mango fruits
       for (const fruit of this.fruits) {
-        if (!fruit.active || kart.finished) continue;
+        if (kart.finished || fruit.cool[kart.id] > 0) continue;
         if (Math.hypot(kart.x - fruit.x, kart.z - fruit.z) < 2.0) {
-          fruit.active = false;
-          fruit.respawnTimer = 8.0;
+          fruit.cool[kart.id] = 8.0;
           kart.mango = Math.min(10, kart.mango + 1);
           kart.turboCharge = Math.min(100, kart.turboCharge + 4);
           this.events.push({ type: 'fruit_pickup', kartId: kart.id });
@@ -604,13 +609,27 @@ export class RaceSimulation {
         const dist = Math.hypot(dx, dz);
         const minDist = 2.2;
         if (dist > 0.001 && dist < minDist) {
-          const push = (minDist - dist) * 0.5;
-          const nx = dx / dist;
-          const nz = dz / dist;
-          a.x -= nx * push;
-          a.z -= nz * push;
-          b.x += nx * push;
-          b.z += nz * push;
+          // Karts slide off each other sideways. Pushing along the line of travel would teleport the
+          // follower backwards and the leader forwards, which hands the front-runner a free advantage.
+          const hx = Math.sin(a.heading) + Math.sin(b.heading);
+          const hz = Math.cos(a.heading) + Math.cos(b.heading);
+          const hl = Math.hypot(hx, hz) || 1;
+          const fx = hx / hl;
+          const fz = hz / hl;
+          const rx = fz;
+          const rz = -fx;
+          const along = dx * fx + dz * fz;
+          let lat = dx * rx + dz * rz;
+          if (Math.abs(lat) < 0.05) lat = (i + j) % 2 === 0 ? 0.05 : -0.05;
+          const overlap = minDist - dist;
+          const sl = Math.sign(lat);
+          const sa = Math.sign(along) || 1;
+          const pl = overlap * 0.5 * 0.9;
+          const pa = overlap * 0.5 * 0.1;
+          a.x -= (rx * sl * pl + fx * sa * pa);
+          a.z -= (rz * sl * pl + fz * sa * pa);
+          b.x += (rx * sl * pl + fx * sa * pa);
+          b.z += (rz * sl * pl + fz * sa * pa);
         }
       }
     }
