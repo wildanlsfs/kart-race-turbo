@@ -415,9 +415,9 @@ function choosePath(path) {
   saveChoices();
   wizNext();
 }
-for (const b of wizEl.querySelectorAll('[data-step="mode"] [data-pick]')) b.addEventListener('click', () => { if (b.dataset.pick === 'solo') choosePath('solo'); else { wiz.path = '2p'; wizGo('multi'); } });
-for (const b of wizEl.querySelectorAll('[data-step="multi"] [data-pick]')) b.addEventListener('click', () => { if (b.dataset.pick === '2p') choosePath('2p'); else { wiz.path = 'host'; wizGo('role'); } });
-for (const b of wizEl.querySelectorAll('[data-step="role"] [data-pick]')) b.addEventListener('click', () => choosePath(b.dataset.pick === 'host' ? 'host' : 'join'));
+for (const b of wizEl.querySelectorAll('.wz-step[data-step="mode"] [data-pick]')) b.addEventListener('click', () => { if (b.dataset.pick === 'solo') choosePath('solo'); else { wiz.path = '2p'; wizGo('multi'); } });
+for (const b of wizEl.querySelectorAll('.wz-step[data-step="multi"] [data-pick]')) b.addEventListener('click', () => { if (b.dataset.pick === '2p') choosePath('2p'); else { wiz.path = 'host'; wizGo('role'); } });
+for (const b of wizEl.querySelectorAll('.wz-step[data-step="role"] [data-pick]')) b.addEventListener('click', () => choosePath(b.dataset.pick === 'host' ? 'host' : 'join'));
 document.getElementById('wz-back').addEventListener('click', wizBack);
 document.getElementById('wz-racer-next').addEventListener('click', wizNext);
 document.getElementById('wz-circuit-next').addEventListener('click', wizNext);
