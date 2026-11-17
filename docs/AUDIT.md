@@ -126,3 +126,62 @@ Other viewports (Canyon, 1 seed, old buttons vs new pad): 1180x820 follow 29.0 s
 - Long-press context menu, iOS Safari pointer-capture behaviour and double-tap zoom could not be tested.
 - Webcam lean steering still only verified with synthetic poses.
 - Pad covers the lower-left of the road view (translucent); at 1024x768 it can overlap the left wheel of the kart when the kart is far left.
+
+---
+
+# Performance pass (2026-11-17, "gets laggier the longer I play" on a tablet)
+
+Method: headless Chrome (Playwright, software GL), `?debug` hooks (`window.__r`, `__game.getMetrics()` now includes three's `geometries`, `textures`, `calls`, `triangles`), CDP CPU throttle, deterministic frames (snapshot positions and `performance.now` frozen, same camera before and after). A real tablet GPU and real thermal throttling were NOT measured: draw calls, memory counts and main-thread render time are the evidence, not a tablet FPS claim.
+
+## G. Cause 1 (verified): GPU memory leak in `js/renderer.js`
+`buildTrack()` cleared groups without `dispose()`; every track build (including every track-card click in the menu preview) left geometry, about 5 canvas textures and unique materials on the GPU; and `render()` destroyed and rebuilt all race kart meshes (about 119 geometries each) every time the screen left "racing" (finish modal, menu).
+- FIXED: `disposeTree()` frees everything not flagged `userData.shared` (cached toon/ink materials, shared geometries, burst/crate/blob resources are flagged and never disposed). Kart meshes now persist (hidden, not destroyed, when the menu has only the showcase kart; rebuilt and disposed only if the driver for that kart id changes); kart geometry is cached per driver. `getState().meshDrivers` lists visible karts only.
+- 24 cycles of (menu track-card click, start race, pause, restart = race again, back to menu), 1280x720, `npm`-free probe, JS heap after forced GC:
+
+| after cycle | before: geometries / textures / heap | after: geometries / textures / heap |
+|---|---|---|
+| start | 151 / 8 / 6.0 MB | 45 / 8 / 4.3 MB |
+| 4 | 1127 / 24 / 9.1 MB | 73 / 8 / 6.2 MB |
+| 12 | 3132 / 56 / 13.2 MB | 75 / 8 / 6.5 MB |
+| 24 | 6106 / 104 / 18.5 MB | 75 / 8 / 6.6 MB |
+
+Geometries and textures are flat after the fix; before they grew by about 250 geometries and 4 textures per cycle (JS heap only shows the CPU side; the GPU side was about 55 MB after 36 track switches in the earlier measurement). Shader programs went from 13 to 19 (instancing and vertex-colour variants, compiled once).
+
+## H. Cause 2 (verified logic, device behaviour inferred): adaptive resolution
+Old rule: FPS estimated as the average of 1/dt with dt clamped to 0.05 (skews high), step down 0.08 every 0.5 s below 46, step up only above 57. A tablet sitting at 50-56 fps could never recover resolution (blurry and low for the rest of the session) and the 0.5 s step rate dropped the scale to the floor within about 3 s.
+- FIXED: `js/perf.js` `AdaptiveScale`: fps = 1000 / mean frame time over a 45-frame window (each frame clamped to 100 ms; a median was tried first and hid stutter), step down below 46 fps, step up from 52 fps, 3 s cooldown between changes, 1.5 s warm-up after a race starts or resumes, and anti-hunt memory (a step down within 8 s of a step up makes the scale we just left a ceiling for 30 s, doubling up to 5 min each repeat). Fed only while racing and not paused. The displayed FPS is now frames per second over 0.5 s (no 1/dt averaging).
+- 10 Node tests in `tests/perf.test.mjs`: steady 60 fps never changes the scale; cooldown and floor respected; 54 fps recovers from 0.73 to 1.0; no change inside the 46-52 hysteresis band; resolution-bound load settles then recovers; a CPU-bound load that resolution cannot fix does not oscillate; stutter counts as slow; single hitches do not move it.
+- Throttled browser runs (CDP `Emulation.setCPUThrottlingRate`, 20 s free, 50 s throttled, 40 s free; scale sampled every second):
+  - OLD code, 4x: fps 60 to 26-29, scale 1 -> 0.84 -> 0.68 -> 0.65 within 3 s (t=21..23), floor for the whole throttle, then on release 0.65 -> 0.73 -> 0.77 -> 0.85 -> 0.93 -> 1 over 6 s (with a 0.73 -> 0.73 re-evaluation flicker).
+  - NEW code, 3x, 4x, 6x, 8x: stays at 60 fps and scale 1 (the draw-call cut below means 4x CPU throttle no longer pushes the frame time over budget); only a single 1 -> 0.92 -> 1 blip at a race restart at 4x.
+  - NEW code, 12x: scale 1 -> 0.92 (t=21) -> 0.84 -> 0.76 -> 0.68 -> 0.65 (t=34), one step per 3 s, pinned at 0.65 for the remaining 40 s with no hunting; on release 0.65 -> 0.69 -> 0.73 -> 0.77 -> 0.81 -> 0.85 (one step per 3 s, t=74..86); a 0.85 -> 0.77 -> 0.69 -> 0.73 -> 0.77 dip at t=89..100 coincided with the race ending and Race Again restarting (one hitch frame burst, fps 24) and recovered by itself.
+  - Caveat: the CDP throttle slows the page's main thread, not the (software) GPU, so resolution cannot help there; this shows the controller dynamics (rate, floor, no hunting, recovery), not that a lower scale restores FPS on a GPU-bound tablet.
+
+## I. Cause 3 (inferred, now much reduced): draw calls and main-thread render cost
+Measured draw calls per frame (`renderer.info.render.calls`, counted by category with a frustum test that matched `info.render.calls` exactly), 1280x720, same camera before/after:
+
+| case | calls before | calls after |
+|---|---|---|
+| island start grid | 427 | 66 |
+| island mid-lap | 465 | 60 |
+| canyon start grid | 361 | 63 |
+| canyon mid-lap | 579 | 74 |
+| temple start grid | 446 | 69 |
+| temple mid-lap | 212 | 53 |
+
+1024x768: 357 / 355 / 309 / 485 / 384 / 176 before, 59 / 49 / 57 / 63 / 64 / 43 after. Worst case 579 -> 74 (-87 %). By category (island start, before -> after): static scenery 146 -> 18 and its outlines 134 -> 9, karts 55 -> 14 and outlines 53 -> 12, crates 4 -> 1 (+1 outline), fruits 12 -> 2 (+2 outlines), sky/ground/road 3 -> 3, boost pads 2 -> 2 (+2 outlines; animated texture, left alone). Puff particles: up to 60 calls before, 1 now.
+Main-thread `renderer.render()` time (80 calls on a static frame, 1024x768, desktop CPU): island 2.1 ms -> 0.5 ms, canyon 1.7 -> 0.4, temple 2.0 -> 0.4 (median). A tablet CPU is several times slower, so the saving there is larger in absolute terms (not measured).
+
+What changed (`js/batch.js`, `js/renderer.js`):
+- Static scenery (curbs, props, gate pillars and caps, ramps) is baked into chunked meshes (90-unit cells; hills and mountains in 160-unit cells) with vertex colours and one baked ink mesh per cell, so frustum culling still works per chunk. Cast/receive shadow flags are kept by splitting batches, so the static shadow map is built from the same casters as before.
+- The ink outline is baked, not approximated: every vertex is pushed out along its normal by the original thickness in the part's own space, then transformed, which is exactly what the shader extrusion did (also under non-uniform scale); drawn with a plain back-face material.
+- Karts are baked per rigid sub-assembly (chassis incl. rear wheels and steering wheel, steering front wheel, driver, arm, dizzy stars), cached per driver; articulation (lean, steer, arms, punch scale, flames, shield, blink) is unchanged. Wheel spin was dropped (tyres and rims are bodies of revolution; it only shimmered the 16-gon facets).
+- Crates and fruits (body, leaf and their outlines) are InstancedMesh, matrices written each frame for active items only; the shadow-map casters are the same. Particle puffs are one InstancedMesh with per-instance colour.
+- Tests (`tests/batch.test.mjs`) check bake equality of the ink shell, colour attribute, frame separation, chunking and shadow-flag splitting.
+
+Visual check (deterministic frames, 3 tracks x start grid / mid-lap): `docs/screens/perf/before/*.png`, `docs/screens/perf/after/*.png`, amplified difference maps in `docs/screens/perf/diff/`. Only 0.25-0.87 % of pixels differ by more than 8/255, all on 1-pixel edges (anti-aliasing and wheel facets) plus the HUD rank text (the sim differs by a frame). `docs/screens/perf/kart_states_before_left_after_right.png` compares karts in turbo/punch/steer, spin-out with shield, and airborne states for several drivers.
+
+Honest limits:
+- Triangles per frame rose about 30-50 % (island start 35.6k -> 49.9k) because crates and fruits are drawn instanced without per-item culling and chunks are coarser than single props; this trades cheap vertex work for far fewer draw calls (what the CPU-bound tablet case needs).
+- Pose inference on the webcam path is unchanged and still competes with rendering on a tablet.
+- LAN mode, 2-player split-screen and the touch layout were exercised only through the same render path (no console errors in the probes); not played on two devices.
