@@ -7,6 +7,25 @@ export const IDLE = { throttle: 1, brake: false, reverse: false, steer: 0, turbo
 export const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// Fires only when it makes sense, like a human who looks at the road: rockets/bombs with a kart ahead,
+// TNT with a kart close behind, a shield when something is about to hit.
+function wantsToFire(sim, k) {
+  if (!k.heldItem) return false;
+  const fx = Math.sin(k.heading); const fz = Math.cos(k.heading);
+  let ahead = null; let behind = false;
+  for (const o of sim.karts) {
+    if (o === k) continue;
+    const dx = o.x - k.x; const dz = o.z - k.z;
+    const along = dx * fx + dz * fz; const side = Math.abs(dx * fz - dz * fx);
+    if (along > 4 && along < 60 && side < 12 && (!ahead || along < ahead.along)) ahead = { along, side };
+    if (along < -3 && along > -26 && side < 6) behind = true;
+  }
+  if (k.heldItem === 'rocket') return Boolean(ahead);
+  if (k.heldItem === 'bomb') return Boolean(ahead && ahead.side < 4 && ahead.along < 40);
+  if (k.heldItem === 'tnt') return behind;
+  return Boolean(ahead && ahead.along < 25);
+}
+
 // A competent human: auto-gas, steers towards a look-ahead point on the centre line with a proportional
 // controller (what a good player does with the pad), uses turbo on straights, fires items now and then.
 // `lane` shifts the aimed line (metres, right positive), `lift` lets it brake for very sharp bends.
@@ -27,7 +46,7 @@ export function competentBot(sim, k, { rng = Math.random, turbo = true, lane = 0
   return {
     ...IDLE, steer, brake, throttle: brake ? 0 : 1,
     turbo: turbo && k.turboCharge >= 55 && Math.abs(steer) < 0.25,
-    attack: Boolean(k.heldItem) && rng() < 0.03,
+    attack: wantsToFire(sim, k),
   };
 }
 
