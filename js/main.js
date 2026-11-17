@@ -338,28 +338,57 @@ function renderSummary() {
 }
 
 // -- step machine
-const WZ_ORDER = ['mode', 'racer', 'circuit', 'ready'];
-function wizGo(step, pick = 1) {
+// Paths: solo = mode > racer > circuit > ready; 2p = mode > multi > racer(P1) > racer(P2) > circuit > ready;
+// host = mode > multi > role > racer > circuit > ready (create room) > lobby; join = mode > multi > role > racer > join > lobby.
+// Back pops a history stack, so it always returns to exactly where you came from and never keeps stale choices.
+const WZ_PATHS = {
+  solo: [['mode', 1], ['racer', 1], ['circuit', 1], ['ready', 1]],
+  '2p': [['mode', 1], ['multi', 1], ['racer', 1], ['racer', 2], ['circuit', 1], ['ready', 1]],
+  host: [['mode', 1], ['multi', 1], ['role', 1], ['racer', 1], ['circuit', 1], ['ready', 1]],
+  join: [['mode', 1], ['multi', 1], ['role', 1], ['racer', 1], ['join', 1]],
+};
+const WZ_DOT_LABEL = { mode: 'Mode', multi: 'Multi', role: 'Role', racer: 'Racer', circuit: 'Circuit', ready: 'Start', join: 'Join' };
+wiz.path = 'solo';
+wiz.stack = [];
+function renderDots() {
+  const list = WZ_PATHS[wiz.path];
+  const dots = document.getElementById('wz-dots');
+  const cur = list.findIndex(([st, pk]) => st === wiz.step && pk === wiz.pick);
+  dots.innerHTML = list.map(([st, pk], i) => `<li class="${i === cur ? 'on' : (i < cur ? 'done' : '')}">${st === 'racer' && wiz.path === '2p' ? `P${pk}` : WZ_DOT_LABEL[st]}</li>`).join('');
+}
+function wizRender(step, pick) {
   wiz.step = step;
   wiz.pick = pick;
   wizEl.dataset.step = step;
   for (const sec of wizEl.querySelectorAll('.wz-step')) sec.classList.toggle('hidden', sec.dataset.step !== step);
-  const idx = WZ_ORDER.indexOf(step);
-  for (const li of wizEl.querySelectorAll('.wz-dots li')) {
-    const i = WZ_ORDER.indexOf(li.dataset.dot);
-    li.classList.toggle('on', i === idx);
-    li.classList.toggle('done', i < idx);
-  }
-  const p1 = state.selectedDriverId;
-  state.previewDriverId = step === 'racer' ? currentPickId() : p1;
+  renderDots();
+  state.previewDriverId = step === 'racer' ? currentPickId() : state.selectedDriverId;
   if (step === 'racer') updateRacerCards();
   if (step === 'circuit') updateCircuitStep();
   if (step === 'ready') {
     renderSummary();
-    document.getElementById('wz-start-sub').textContent = state.mode === '2p' ? 'Camera is optional - keyboard works for both' : 'Camera is optional';
+    const host = wiz.path === 'host';
+    document.getElementById('wz-host-name-row').classList.toggle('hidden', !host);
+    document.getElementById('wz-host-error').classList.add('hidden');
+    document.getElementById('wz-start-sub').textContent = host ? 'Creates the room; friends join with the code' : (state.mode === '2p' ? 'Camera is optional - keyboard works for both' : 'Camera is optional');
+    document.querySelector('#wz-start strong').textContent = host ? 'CREATE ROOM' : 'START!';
   }
+  if (step === 'join') refreshLanLobby();
   rebuildMenuPreview();
   setTimeout(() => focusStepDefault(), 30);
+}
+// Go to a step, remembering where we came from. Jumping to a step that is already in the history unwinds to it.
+function wizGo(step, pick = 1) {
+  const all = [...wiz.stack, { step: wiz.step, pick: wiz.pick }];
+  const idx = all.findLastIndex((e) => e.step === step && e.pick === pick);
+  wiz.stack = idx >= 0 ? all.slice(0, idx) : all;
+  wizRender(step, pick);
+}
+function wizReset() {
+  wiz.stack = [];
+  wiz.path = 'solo';
+  state.mode = '1p';
+  wizRender('mode', 1);
 }
 function focusStepDefault() {
   if (state.screen !== 'menu') return;
@@ -369,34 +398,37 @@ function focusStepDefault() {
   if (target) { try { target.focus({ preventScroll: true }); } catch (_) {} }
 }
 function wizBack() {
-  if (wiz.step === 'racer') return wiz.pick === 2 ? wizGo('racer', 1) : wizGo('mode');
-  if (wiz.step === 'circuit') return wizGo('racer', state.mode === '2p' ? 2 : 1);
-  if (wiz.step === 'ready') return wizGo('circuit');
+  const prev = wiz.stack.pop();
+  if (!prev) return;
+  wizRender(prev.step, prev.pick);
 }
 function wizNext() {
-  if (wiz.step === 'racer') return state.mode === '2p' && wiz.pick === 1 ? wizGo('racer', 2) : wizGo('circuit');
-  if (wiz.step === 'circuit') return wizGo('ready');
+  const list = WZ_PATHS[wiz.path];
+  const i = list.findIndex(([st, pk]) => st === wiz.step && pk === wiz.pick);
+  const n = list[i + 1];
+  if (n) wizGo(n[0], n[1]);
 }
-function chooseMode(mode) {
-  state.mode = mode;
-  setScreen('menu');
-  if (mode === 'lan') {
-    lanJoinViewEl.classList.remove('hidden');
-    lanRoomViewEl.classList.add('hidden');
-    setScreen('lan_lobby');
-    refreshLanLobby();
-  } else {
-    ensureP2();
-    wizGo('racer', 1);
-  }
+function choosePath(path) {
+  wiz.path = path;
+  state.mode = path === '2p' ? '2p' : (path === 'solo' ? '1p' : 'lan');
+  ensureP2();
   saveChoices();
+  wizNext();
 }
-for (const b of wizEl.querySelectorAll('[data-mode]')) b.addEventListener('click', () => chooseMode(b.dataset.mode));
+for (const b of wizEl.querySelectorAll('[data-step="mode"] [data-pick]')) b.addEventListener('click', () => { if (b.dataset.pick === 'solo') choosePath('solo'); else { wiz.path = '2p'; wizGo('multi'); } });
+for (const b of wizEl.querySelectorAll('[data-step="multi"] [data-pick]')) b.addEventListener('click', () => { if (b.dataset.pick === '2p') choosePath('2p'); else { wiz.path = 'host'; wizGo('role'); } });
+for (const b of wizEl.querySelectorAll('[data-step="role"] [data-pick]')) b.addEventListener('click', () => choosePath(b.dataset.pick === 'host' ? 'host' : 'join'));
 document.getElementById('wz-back').addEventListener('click', wizBack);
 document.getElementById('wz-racer-next').addEventListener('click', wizNext);
 document.getElementById('wz-circuit-next').addEventListener('click', wizNext);
 document.getElementById('wz-start').addEventListener('click', () => {
   saveChoices();
+  if (wiz.path === 'host') {
+    const name = document.getElementById('lan-player-name-host').value || 'Host';
+    lanClient.createRoom({ name, driverId: state.selectedDriverId, trackId: state.selectedTrackId, difficulty: state.difficulty, laps: state.laps })
+      .catch((e) => showLanError(e.message));
+    return;
+  }
   openCalibration(() => startLocalRace(state.mode));
 });
 buildRacerCards();
@@ -482,7 +514,7 @@ function leaveToMenu() {
   state.sim = null;
   setPaused(false);
   setScreen('menu');
-  wizGo('mode');
+  wizReset();
 }
 // In a local race the Menu button pauses first (a stray tap must not throw the race away).
 btnMenuReturn.addEventListener('click', () => {
@@ -916,20 +948,18 @@ function startLocalRace(mode) {
 const lanErrorEl = document.getElementById('lan-error');
 const lanUrlTextEl = document.getElementById('lan-url-text');
 const lanRoomsListEl = document.getElementById('lan-rooms-list');
-const lanJoinViewEl = document.getElementById('lan-join-view');
-const lanRoomViewEl = document.getElementById('lan-room-view');
 const roomCodeDisplayEl = document.getElementById('room-code-display');
 const roomTrackDisplayEl = document.getElementById('room-track-display');
 const roomPlayersListEl = document.getElementById('room-players-list');
 const btnLanStart = document.getElementById('btn-lan-start');
 
 function showLanError(msg) {
-  if (!msg) {
-    lanErrorEl.classList.add('hidden');
-    return;
+  for (const el of [lanErrorEl, document.getElementById('wz-host-error')]) {
+    if (!el) continue;
+    if (!msg) { el.classList.add('hidden'); continue; }
+    el.textContent = msg;
+    el.classList.remove('hidden');
   }
-  lanErrorEl.textContent = msg;
-  lanErrorEl.classList.remove('hidden');
 }
 
 const lanClient = new LanClient({
@@ -940,8 +970,7 @@ const lanClient = new LanClient({
       setScreen('racing');
       return;
     }
-    lanJoinViewEl.classList.add('hidden');
-    lanRoomViewEl.classList.remove('hidden');
+    if (state.screen === 'menu') setScreen('lan_lobby');
     roomCodeDisplayEl.textContent = room.code;
     roomTrackDisplayEl.textContent = getTrackById(room.trackId).name;
     roomPlayersListEl.innerHTML = '';
@@ -974,43 +1003,15 @@ const lanClient = new LanClient({
   onError: (msg) => showLanError(msg),
 });
 
-// Lobby: every player picks their own racer; the host picks circuit, difficulty and laps.
-const lanDriverListEl = document.getElementById('lan-driver-list');
-const lanTrackListEl = document.getElementById('lan-track-list');
+// Lobby: shows who joined and the host's settings (circuit, difficulty, laps); only the host can start.
 function renderLanPickers(room, myId) {
   const isHost = room.hostId === myId;
   const me = room.players.find((p) => p.id === myId);
   if (me && DRIVERS.some((d) => d.id === me.driverId)) state.selectedDriverId = me.driverId;
-  lanDriverListEl.innerHTML = '';
-  for (const d of DRIVERS) {
-    const owner = room.players.find((p) => p.connected && p.driverId === d.id);
-    const takenByOther = owner && owner.id !== myId;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `wz-racer${me && me.driverId === d.id ? ' selected' : ''}${takenByOther ? ' taken' : ''}`;
-    btn.dataset.driver = d.id;
-    btn.disabled = Boolean(takenByOther);
-    btn.innerHTML = `<strong><span class="swatch-dot" style="background:${d.color}"></span>${d.name}</strong><em>${takenByOther ? owner.name : d.role}</em>`;
-    btn.addEventListener('click', () => lanClient.selectDriver(d.id));
-    lanDriverListEl.appendChild(btn);
-  }
-  lanTrackListEl.innerHTML = '';
-  for (const t of TRACKS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `wz-card${room.trackId === t.id ? ' selected' : ''}`;
-    btn.dataset.track = t.id;
-    btn.disabled = !isHost;
-    btn.innerHTML = `<strong>${t.name}</strong><small>${t.tag} · ${Math.round(t.totalLength / 10) * 10} m</small>`;
-    btn.addEventListener('click', () => lanClient.selectTrack(t.id));
-    lanTrackListEl.appendChild(btn);
-  }
-  for (const b of document.querySelectorAll('#lan-diff .wz-seg-btn')) { b.classList.toggle('selected', b.dataset.diff === room.difficulty); b.disabled = !isHost; }
-  for (const b of document.querySelectorAll('#lan-laps .wz-seg-btn')) { b.classList.toggle('selected', Number(b.dataset.laps) === room.laps); b.disabled = !isHost; }
-  document.getElementById('lan-host-note').textContent = isHost ? '(you are the host: pick the circuit)' : '(the host picks the circuit)';
+  const t = getTrackById(room.trackId);
+  document.getElementById('lan-room-info').textContent = `${t.name} (${Math.round(t.totalLength / 10) * 10} m) · ${DIFFICULTIES[room.difficulty] ? DIFFICULTIES[room.difficulty].name : 'Normal'} · ${room.laps} laps`;
+  document.getElementById('lan-wait-note').textContent = isHost ? 'Press Start when everybody has joined.' : 'Waiting for the host to start the race...';
 }
-for (const b of document.querySelectorAll('#lan-diff .wz-seg-btn')) b.addEventListener('click', () => lanClient.setOptions({ difficulty: b.dataset.diff }));
-for (const b of document.querySelectorAll('#lan-laps .wz-seg-btn')) b.addEventListener('click', () => lanClient.setOptions({ laps: Number(b.dataset.laps) }));
 
 async function refreshLanLobby() {
   showLanError('');
@@ -1020,7 +1021,7 @@ async function refreshLanLobby() {
   }
   lanRoomsListEl.innerHTML = '';
   if (!info.rooms || info.rooms.length === 0) {
-    lanRoomsListEl.innerHTML = '<p class="muted-note">No active rooms yet — click "Create Wi-Fi Room" to start one!</p>';
+    lanRoomsListEl.innerHTML = '<p class="muted-note">No rooms yet. Ask the host to create one.</p>';
     return;
   }
   for (const r of info.rooms) {
@@ -1034,31 +1035,23 @@ async function refreshLanLobby() {
       <button type="button" class="pip-mini-btn">Join</button>
     `;
     item.querySelector('button').addEventListener('click', () => {
-      const name = document.getElementById('lan-player-name').value || 'Racer';
+      const name = document.getElementById('lan-player-name').value || 'Guest';
       lanClient.joinRoom({ code: r.code, name, driverId: state.selectedDriverId }).catch((e) => showLanError(e.message));
     });
     lanRoomsListEl.appendChild(item);
   }
 }
 
-document.getElementById('btn-lan-back').addEventListener('click', () => {
+// Leaving the lobby goes back to the step you came from (host: Ready, joiner: Join), with the room left.
+function leaveLobby() {
   lanClient.leaveRoom();
+  state.lanCurr = null; state.lanPrev = null;
   setScreen('menu');
-  wizGo('mode');
-});
-
+  wizRender(wiz.step, wiz.pick);
+  if (wiz.path === 'join') refreshLanLobby();
+}
+document.getElementById('btn-lan-back').addEventListener('click', leaveLobby);
 document.getElementById('btn-lan-refresh').addEventListener('click', refreshLanLobby);
-
-document.getElementById('btn-lan-create').addEventListener('click', () => {
-  const name = document.getElementById('lan-player-name').value || 'Host Racer';
-  lanClient.createRoom({
-    name,
-    driverId: state.selectedDriverId,
-    trackId: state.selectedTrackId,
-    difficulty: state.difficulty,
-    laps: state.laps,
-  }).catch((e) => showLanError(e.message));
-});
 
 document.getElementById('btn-lan-join').addEventListener('click', () => {
   const code = document.getElementById('lan-room-code').value.trim().toUpperCase();
@@ -1082,12 +1075,7 @@ document.getElementById('btn-lan-camera').addEventListener('click', () => {
   openCalibration(() => setScreen('lan_lobby'));
 });
 
-document.getElementById('btn-lan-leave').addEventListener('click', () => {
-  lanClient.leaveRoom();
-  lanJoinViewEl.classList.remove('hidden');
-  lanRoomViewEl.classList.add('hidden');
-  refreshLanLobby();
-});
+document.getElementById('btn-lan-leave').addEventListener('click', leaveLobby);
 
 // Combine Webcam Motion Input + Keyboard/Touch Input
 let touchSteerValue = 0;
@@ -1274,7 +1262,8 @@ document.getElementById('btn-race-again').addEventListener('click', () => {
     // Race Again: back to the circuit step with the same racer(s)
     state.sim = null;
     setScreen('menu');
-    wizGo('circuit');
+    if (wiz.path === 'solo' || wiz.path === '2p') wizGo('circuit');
+    else wizReset();
   }
 });
 

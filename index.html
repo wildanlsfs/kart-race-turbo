@@ -135,19 +135,16 @@
       </ol>
     </header>
 
-    <!-- Step 1: mode -->
+    <!-- Step 1: Solo or Multiplayer -->
     <section class="wz-step" data-step="mode" aria-labelledby="wz-t-mode">
       <div class="comic-logo" aria-label="Kart Race Turbo"><span class="l1">KART RACE</span><span class="l2">TURBO!</span></div>
       <h1 id="wz-t-mode" class="wz-title">How do you want to play?</h1>
-      <div class="wz-cards wz-cards-3">
-        <button id="wz-mode-solo" class="wz-card wz-item tone-orange" type="button" data-mode="1p">
-          <span class="wz-ico">🏁</span><strong>Solo</strong><small>You against 3 computer racers</small>
+      <div class="wz-cards wz-cards-2">
+        <button id="wz-mode-solo" class="wz-card wz-item tone-orange" type="button" data-pick="solo">
+          <span class="wz-ico">🏁</span><strong>Play alone</strong><small>You against 3 computer racers</small>
         </button>
-        <button id="wz-mode-2p" class="wz-card wz-item tone-green" type="button" data-mode="2p">
-          <span class="wz-ico">👥</span><strong>2 Players</strong><small>Split screen on this one device</small>
-        </button>
-        <button id="wz-mode-lan" class="wz-card wz-item tone-blue" type="button" data-mode="lan">
-          <span class="wz-ico">📡</span><strong>Wi-Fi</strong><small>Race friends on the same network</small>
+        <button id="wz-mode-multi" class="wz-card wz-item tone-green" type="button" data-pick="multi">
+          <span class="wz-ico">👥</span><strong>Multiplayer</strong><small>Race with friends</small>
         </button>
       </div>
       <ul class="moves-strip">
@@ -156,6 +153,32 @@
         <li><i>🚀</i><b>Turbo</b><span>Both hands up!</span></li>
         <li><i>👊</i><b>Attack</b><span>Punch forward!</span></li>
       </ul>
+    </section>
+
+    <!-- Step 1b: multiplayer kind -->
+    <section class="wz-step hidden" data-step="multi" aria-labelledby="wz-t-multi">
+      <h1 id="wz-t-multi" class="wz-title">Multiplayer: where are your friends?</h1>
+      <div class="wz-cards wz-cards-2">
+        <button id="wz-multi-screen" class="wz-card wz-item tone-green" type="button" data-pick="2p">
+          <span class="wz-ico">🖥️</span><strong>1 Screen</strong><small>2 players share this device (split screen)</small>
+        </button>
+        <button id="wz-multi-lan" class="wz-card wz-item tone-blue" type="button" data-pick="lan">
+          <span class="wz-ico">📡</span><strong>Wi-Fi</strong><small>Each player on their own device, same network</small>
+        </button>
+      </div>
+    </section>
+
+    <!-- Step 1c: Wi-Fi host or join -->
+    <section class="wz-step hidden" data-step="role" aria-labelledby="wz-t-role">
+      <h1 id="wz-t-role" class="wz-title">Wi-Fi: host a room or join one?</h1>
+      <div class="wz-cards wz-cards-2">
+        <button id="wz-role-host" class="wz-card wz-item tone-orange" type="button" data-pick="host">
+          <span class="wz-ico">➕</span><strong>Host a room</strong><small>You pick the circuit, friends join your code</small>
+        </button>
+        <button id="wz-role-join" class="wz-card wz-item tone-blue" type="button" data-pick="join">
+          <span class="wz-ico">🔑</span><strong>Join a room</strong><small>Enter the 4-letter code or tap a room</small>
+        </button>
+      </div>
     </section>
 
     <!-- Step 2: racer (the 3D kart on the right is the live preview) -->
@@ -199,7 +222,30 @@
     <section class="wz-step hidden" data-step="ready" aria-labelledby="wz-t-ready">
       <h1 id="wz-t-ready" class="wz-title">Ready to race?</h1>
       <div id="wz-summary" class="wz-summary"></div>
+      <label id="wz-host-name-row" class="wz-name-row hidden">Your name <input id="lan-player-name-host" class="text-input" type="text" maxlength="16" value="Host" /></label>
+      <div id="wz-host-error" class="lan-error lan-error-msg hidden"></div>
       <button id="wz-start" class="btn-3d green-btn wz-start wz-item" type="button"><span class="btn-ico">🏁</span><span class="btn-txt"><strong>START!</strong><small id="wz-start-sub">Camera is optional</small></span></button>
+    </section>
+
+    <!-- Wi-Fi join: code or room list -->
+    <section class="wz-step hidden" data-step="join" aria-labelledby="wz-t-join">
+      <h1 id="wz-t-join" class="wz-title">Join a room</h1>
+      <div class="wz-join">
+        <div class="lan-box">
+          <label class="field-label" for="lan-player-name">Your name</label>
+          <input id="lan-player-name" class="text-input" type="text" maxlength="16" value="Guest" />
+          <div class="join-code-row">
+            <input id="lan-room-code" class="text-input code-input" type="text" maxlength="4" placeholder="CODE" aria-label="4-letter Room Code" autocapitalize="characters" />
+            <button id="btn-lan-join" class="btn-3d blue-btn wz-item" type="button"><span class="btn-txt"><strong>Join</strong></span></button>
+          </div>
+          <div id="lan-error" class="lan-error lan-error-msg hidden"></div>
+          <div id="lan-url-banner" class="lan-banner">Open <strong id="lan-url-text">http://localhost:3080</strong> on this Wi-Fi</div>
+        </div>
+        <div class="lan-box">
+          <div class="lan-list-header"><h3>Rooms on this Wi-Fi</h3><button id="btn-lan-refresh" class="pip-mini-btn wz-item" type="button">↻ Refresh</button></div>
+          <div id="lan-rooms-list" class="lan-rooms-list"><p class="muted-note">No rooms yet. Ask the host to create one.</p></div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -230,48 +276,12 @@
   <section id="lan-modal" class="overlay-modal hidden" aria-labelledby="lan-title">
     <div class="cream-card wide-card">
       <div class="lan-header">
-        <h2 id="lan-title">📡 Wi-Fi / LAN Multiplayer</h2>
+        <h2 id="lan-title">📡 Wi-Fi room</h2>
         <button id="btn-lan-back" class="btn-soft small-btn" type="button">← Back</button>
       </div>
 
-      <div id="lan-url-banner" class="lan-banner">
-        Other devices on the same Wi-Fi can open: <strong id="lan-url-text">http://localhost:3080</strong>
-      </div>
-      <div id="lan-error" class="lan-error hidden"></div>
-
-      <!-- Pre-Room View -->
-      <div id="lan-join-view" class="lan-columns">
-        <div class="lan-box">
-          <h3>Host or Join by Code</h3>
-          <label class="field-label" for="lan-player-name">Your Racer Name</label>
-          <input id="lan-player-name" class="text-input" type="text" maxlength="16" value="Racer 1" />
-
-          <button id="btn-lan-create" class="btn-3d orange-btn" type="button">
-            <span class="btn-ico">➕</span>
-            <span class="btn-txt"><strong>Create Wi-Fi Room</strong></span>
-          </button>
-
-          <div class="join-code-row">
-            <input id="lan-room-code" class="text-input code-input" type="text" maxlength="4" placeholder="CODE" aria-label="4-letter Room Code" />
-            <button id="btn-lan-join" class="btn-3d blue-btn" type="button">
-              <span class="btn-txt"><strong>Join Code</strong></span>
-            </button>
-          </div>
-        </div>
-
-        <div class="lan-box">
-          <div class="lan-list-header">
-            <h3>Active Rooms on Wi-Fi</h3>
-            <button id="btn-lan-refresh" class="pip-mini-btn" type="button">↻ Refresh</button>
-          </div>
-          <div id="lan-rooms-list" class="lan-rooms-list">
-            <p class="muted-note">No active rooms yet — click "Create Wi-Fi Room" to start one!</p>
-          </div>
-        </div>
-      </div>
-
       <!-- Inside Room View -->
-      <div id="lan-room-view" class="lan-room-view hidden">
+      <div id="lan-room-view" class="lan-room-view">
         <div class="room-code-banner">
           <span>ROOM CODE:</span>
           <strong id="room-code-display">KART</strong>
@@ -279,22 +289,8 @@
         </div>
         <h3>Connected Racers (remaining slots are filled by computer racers):</h3>
         <div id="room-players-list" class="room-players-list"></div>
-        <h3>Your racer</h3>
-        <div id="lan-driver-list" class="lan-pick-row" role="group" aria-label="Your racer"></div>
-        <h3>Race settings <small id="lan-host-note" class="muted-note"></small></h3>
-        <div id="lan-track-list" class="lan-pick-row" role="group" aria-label="Circuit"></div>
-        <div class="wz-options lan-opts">
-          <div class="wz-seg" id="lan-diff" role="group" aria-label="Difficulty">
-            <button type="button" class="wz-seg-btn" data-diff="santai">Santai</button>
-            <button type="button" class="wz-seg-btn" data-diff="normal">Normal</button>
-            <button type="button" class="wz-seg-btn" data-diff="pro">Pro</button>
-          </div>
-          <div class="wz-seg" id="lan-laps" role="group" aria-label="Laps">
-            <button type="button" class="wz-seg-btn" data-laps="1">1 lap</button>
-            <button type="button" class="wz-seg-btn" data-laps="3">3 laps</button>
-            <button type="button" class="wz-seg-btn" data-laps="5">5 laps</button>
-          </div>
-        </div>
+        <p id="lan-room-info" class="lan-room-info"></p>
+        <p id="lan-wait-note" class="muted-note"></p>
         <div class="modal-actions">
           <button id="btn-lan-start" class="btn-3d green-btn" type="button">
             <span class="btn-ico">🏁</span>
