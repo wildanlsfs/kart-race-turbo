@@ -16,7 +16,7 @@ function wrapAngle(a) {
 
 // Difficulty: only the AI changes (top-speed scale, how often it uses items, how often it slips up).
 export const DIFFICULTIES = {
-  santai: { id: 'santai', name: 'Santai', topScale: 0.93, itemUse: 0.45, itemDelay: 1.8, mistakeRate: 0.12 },
+  santai: { id: 'santai', name: 'Santai', topScale: 0.93, itemUse: 0.45, itemDelay: 1.8, mistakeRate: 0.08 },
   normal: { id: 'normal', name: 'Normal', topScale: 0.99, itemUse: 0.8, itemDelay: 1.0, mistakeRate: 0.03 },
   pro: { id: 'pro', name: 'Pro', topScale: 1.04, itemUse: 1.0, itemDelay: 0.5, mistakeRate: 0.006 },
 };
