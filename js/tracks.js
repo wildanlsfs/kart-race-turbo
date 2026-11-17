@@ -66,18 +66,32 @@ function catmullRom(p0, p1, p2, p3, t) {
 function buildTrackData(def) {
   const pts = def.controlPoints;
   const n = pts.length;
-  const samplesCount = 240;
+  const samplesCount = 480;
+  // Dense Catmull-Rom curve first, then resampled at equal arc length so that s (0..1) is the fraction
+  // of the lap in metres: sectors, pads, ramps and crates are then placed by real distance.
+  const dense = [];
+  const perSeg = 80;
+  for (let i = 0; i < n * perSeg; i++) {
+    const idx = Math.floor(i / perSeg) % n;
+    const frac = (i % perSeg) / perSeg;
+    dense.push(catmullRom(pts[(idx - 1 + n) % n], pts[idx], pts[(idx + 1) % n], pts[(idx + 2) % n], frac));
+  }
+  const cum = [0];
+  for (let i = 1; i <= dense.length; i++) {
+    const a = dense[i - 1];
+    const b = dense[i % dense.length];
+    cum.push(cum[i - 1] + Math.hypot(b.x - a.x, b.z - a.z));
+  }
+  const denseLen = cum[cum.length - 1];
   const samples = [];
-
+  let j = 0;
   for (let i = 0; i < samplesCount; i++) {
-    const u = (i / samplesCount) * n;
-    const idx = Math.floor(u) % n;
-    const frac = u - Math.floor(u);
-    const p0 = pts[(idx - 1 + n) % n];
-    const p1 = pts[idx];
-    const p2 = pts[(idx + 1) % n];
-    const p3 = pts[(idx + 2) % n];
-    samples.push(catmullRom(p0, p1, p2, p3, frac));
+    const target = (i / samplesCount) * denseLen;
+    while (cum[j + 1] < target) j++;
+    const a = dense[j];
+    const b = dense[(j + 1) % dense.length];
+    const f = (target - cum[j]) / Math.max(1e-9, cum[j + 1] - cum[j]);
+    samples.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f });
   }
 
   // Compute tangents, right vectors, and cumulative arc length
@@ -95,9 +109,7 @@ function buildTrackData(def) {
     curr.rx = -curr.tz;
     curr.rz = curr.tx;
     curr.s = i / samplesCount;
-    if (i > 0) {
-      totalLength += Math.hypot(curr.x - prev.x, curr.z - prev.z);
-    }
+    totalLength += Math.hypot(curr.x - prev.x, curr.z - prev.z);
   }
 
   const getPointAt = (normS) => {
@@ -124,7 +136,8 @@ function buildTrackData(def) {
   const crateSpawns = [];
   for (const rowS of def.crateRowFractions) {
     const pt = getPointAt(rowS);
-    for (const laneOffset of [-4.2, -1.4, 1.4, 4.2]) {
+    const half = def.roadWidth * 0.5;
+    for (const laneOffset of [-half * 0.78, -half * 0.26, half * 0.26, half * 0.78]) {
       crateSpawns.push({
         id: `crate_${crateSpawns.length}`,
         s: rowS,
@@ -195,7 +208,10 @@ const RAW_TRACKS = [
     id: 'island',
     name: 'Palm Cove',
     subtitle: 'Sunny beach curves & wooden tiki bridges',
-    roadWidth: 13.5,
+    tag: 'Beginner',
+    length: 'Short',
+    mechanic: 'Wide, flowing road: easy to learn, hard to lose',
+    roadWidth: 16,
     theme: {
       skyTop: '#38bdf8',
       skyBottom: '#bae6fd',
@@ -207,35 +223,43 @@ const RAW_TRACKS = [
     },
     controlPoints: [
       { x: 0, y: 0, z: 0 },
-      { x: 0, y: 0, z: -55 },
-      { x: 25, y: 0, z: -105 },
-      { x: 75, y: 0, z: -120 },
-      { x: 125, y: 0, z: -95 },
-      { x: 145, y: 0, z: -45 },
-      { x: 125, y: 0, z: 10 },
-      { x: 95, y: 0, z: 45 },
-      { x: 115, y: 0, z: 95 },
-      { x: 75, y: 0, z: 130 },
-      { x: 20, y: 0, z: 115 },
-      { x: -10, y: 0, z: 60 },
+      { x: 0, y: 0, z: -72 },
+      { x: 20, y: 0, z: -128 },
+      { x: 68, y: 0, z: -160 },
+      { x: 128, y: 0, z: -156 },
+      { x: 172, y: 0, z: -120 },
+      { x: 184, y: 0, z: -68 },
+      { x: 160, y: 0, z: -20 },
+      { x: 120, y: 0, z: 8 },
+      { x: 104, y: 0, z: 48 },
+      { x: 124, y: 0, z: 92 },
+      { x: 120, y: 0, z: 140 },
+      { x: 80, y: 0, z: 172 },
+      { x: 32, y: 0, z: 160 },
+      { x: 8, y: 0, z: 120 },
+      { x: 0, y: 0, z: 64 },
     ],
-    crateRowFractions: [0.14, 0.38, 0.64, 0.86],
+    crateRowFractions: [0.10, 0.33, 0.58, 0.80],
     boostFractions: [
-      { s: 0.08, offset: 0 },
-      { s: 0.28, offset: -2.5 },
-      { s: 0.52, offset: 2.2 },
-      { s: 0.78, offset: 0 },
+      { s: 0.12, offset: 0 },
+      { s: 0.3, offset: -3.0 },
+      { s: 0.52, offset: 3.0 },
+      { s: 0.74, offset: 0 },
+      { s: 0.9, offset: -3.0 },
     ],
     rampFractions: [
-      { s: 0.44, offset: 0 },
-      { s: 0.91, offset: 0 },
+      { s: 0.47, offset: 0 },
+      { s: 0.95, offset: 0 },
     ],
   },
   {
     id: 'canyon',
     name: 'Canyon Dash',
     subtitle: 'Red mesa hairpins & high-speed jump ramps',
-    roadWidth: 13.0,
+    tag: 'Technical',
+    length: 'Long',
+    mechanic: 'Hairpins and 4 jump ramps on a narrow road',
+    roadWidth: 10.5,
     theme: {
       skyTop: '#fb923c',
       skyBottom: '#fde68a',
@@ -247,36 +271,52 @@ const RAW_TRACKS = [
     },
     controlPoints: [
       { x: 0, y: 0, z: 0 },
-      { x: 0, y: 0, z: -65 },
-      { x: 40, y: 0, z: -120 },
-      { x: 100, y: 0, z: -125 },
-      { x: 135, y: 0, z: -75 },
-      { x: 90, y: 0, z: -30 },
-      { x: 65, y: 0, z: 10 },
-      { x: 120, y: 0, z: 55 },
-      { x: 110, y: 0, z: 115 },
-      { x: 55, y: 0, z: 135 },
-      { x: 5, y: 0, z: 105 },
-      { x: -12, y: 0, z: 55 },
+      { x: 0, y: 0, z: -76 },
+      { x: 7, y: 0, z: -131 },
+      { x: 42, y: 0, z: -155 },
+      { x: 76, y: 0, z: -138 },
+      { x: 72, y: 0, z: -96 },
+      { x: 42, y: 0, z: -76 },
+      { x: 42, y: 0, z: -42 },
+      { x: 83, y: 0, z: -21 },
+      { x: 131, y: 0, z: -42 },
+      { x: 148, y: 0, z: -86 },
+      { x: 193, y: 0, z: -103 },
+      { x: 228, y: 0, z: -76 },
+      { x: 214, y: 0, z: -31 },
+      { x: 172, y: 0, z: 0 },
+      { x: 180, y: 0, z: 48 },
+      { x: 214, y: 0, z: 83 },
+      { x: 193, y: 0, z: 127 },
+      { x: 138, y: 0, z: 138 },
+      { x: 96, y: 0, z: 111 },
+      { x: 55, y: 0, z: 90 },
+      { x: 21, y: 0, z: 103 },
+      { x: -14, y: 0, z: 76 },
+      { x: -10, y: 0, z: 34 },
     ],
-    crateRowFractions: [0.16, 0.42, 0.68, 0.88],
+    crateRowFractions: [0.12, 0.30, 0.48, 0.66, 0.84],
     boostFractions: [
-      { s: 0.10, offset: 0 },
-      { s: 0.33, offset: 2.0 },
-      { s: 0.58, offset: -2.0 },
-      { s: 0.82, offset: 0 },
+      { s: 0.09, offset: 0 },
+      { s: 0.37, offset: 1.8 },
+      { s: 0.62, offset: -1.8 },
+      { s: 0.88, offset: 0 },
     ],
     rampFractions: [
-      { s: 0.24, offset: 0 },
-      { s: 0.62, offset: 0 },
-      { s: 0.92, offset: 0 },
+      { s: 0.05, offset: 0 },
+      { s: 0.22, offset: 0 },
+      { s: 0.53, offset: 0 },
+      { s: 0.75, offset: 0 },
     ],
   },
   {
     id: 'temple',
     name: 'Temple Ruins',
     subtitle: 'Ancient mossy stones, torches & turbo straights',
-    roadWidth: 14.0,
+    tag: 'Speed',
+    length: 'Medium',
+    mechanic: 'Long straights, chicanes and 8 boost pads',
+    roadWidth: 13,
     theme: {
       skyTop: '#1e1b4b',
       skyBottom: '#4338ca',
@@ -288,29 +328,51 @@ const RAW_TRACKS = [
     },
     controlPoints: [
       { x: 0, y: 0, z: 0 },
-      { x: 0, y: 0, z: -60 },
-      { x: -35, y: 0, z: -110 },
-      { x: 15, y: 0, z: -145 },
-      { x: 85, y: 0, z: -135 },
-      { x: 130, y: 0, z: -85 },
-      { x: 115, y: 0, z: -20 },
-      { x: 75, y: 0, z: 25 },
-      { x: 95, y: 0, z: 85 },
-      { x: 55, y: 0, z: 130 },
-      { x: 0, y: 0, z: 110 },
-      { x: -15, y: 0, z: 55 },
+      { x: 0, y: 0, z: -41 },
+      { x: -8, y: 0, z: -77 },
+      { x: 8, y: 0, z: -114 },
+      { x: 0, y: 0, z: -150 },
+      { x: 0, y: 0, z: -168 },
+      { x: 7, y: 0, z: -187 },
+      { x: 27, y: 0, z: -200 },
+      { x: 56, y: 0, z: -204 },
+      { x: 91, y: 0, z: -204 },
+      { x: 118, y: 0, z: -209 },
+      { x: 146, y: 0, z: -199 },
+      { x: 173, y: 0, z: -204 },
+      { x: 200, y: 0, z: -201 },
+      { x: 218, y: 0, z: -184 },
+      { x: 222, y: 0, z: -155 },
+      { x: 222, y: 0, z: -118 },
+      { x: 214, y: 0, z: -86 },
+      { x: 230, y: 0, z: -55 },
+      { x: 222, y: 0, z: -23 },
+      { x: 222, y: 0, z: 9 },
+      { x: 220, y: 0, z: 41 },
+      { x: 211, y: 0, z: 77 },
+      { x: 187, y: 0, z: 98 },
+      { x: 155, y: 0, z: 102 },
+      { x: 135, y: 0, z: 102 },
+      { x: 108, y: 0, z: 102 },
+      { x: 82, y: 0, z: 102 },
+      { x: 56, y: 0, z: 102 },
+      { x: 25, y: 0, z: 100 },
+      { x: -4, y: 0, z: 84 },
+      { x: 0, y: 0, z: 50 },
     ],
-    crateRowFractions: [0.12, 0.36, 0.60, 0.84],
+    crateRowFractions: [0.10, 0.34, 0.58, 0.82],
     boostFractions: [
-      { s: 0.07, offset: 0 },
-      { s: 0.26, offset: -2.5 },
-      { s: 0.48, offset: 2.5 },
+      { s: 0.03, offset: 0 },
+      { s: 0.13, offset: -2.5 },
+      { s: 0.285, offset: 2.5 },
+      { s: 0.4, offset: 0 },
+      { s: 0.52, offset: -2.5 },
+      { s: 0.62, offset: 2.5 },
       { s: 0.72, offset: 0 },
-      { s: 0.90, offset: 0 },
+      { s: 0.89, offset: 2.5 },
     ],
     rampFractions: [
-      { s: 0.31, offset: 0 },
-      { s: 0.77, offset: 0 },
+      { s: 0.78, offset: 0 },
     ],
   },
 ];

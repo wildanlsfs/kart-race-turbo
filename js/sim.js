@@ -545,9 +545,17 @@ export class RaceSimulation {
         }
       }
 
-      // Check jump ramps
+      // Check jump ramps. The ramp is drawn as a 5.2 x 4.6 wedge whose high edge faces the driving
+      // direction (renderer: rotation order YXZ, front rises), so the launch zone is the front half of
+      // that footprint, in the ramp's own frame, for karts travelling roughly along it.
       for (const ramp of this.track.ramps) {
-        if (kart.y <= 0.1 && Math.hypot(kart.x - ramp.x, kart.z - ramp.z) < ramp.radius && kart.speed > 12) {
+        if (kart.y > 0.1 || kart.speed <= 12) continue;
+        const rx = kart.x - ramp.x;
+        const rz = kart.z - ramp.z;
+        const along = rx * ramp.tx + rz * ramp.tz;
+        const side = rx * -ramp.tz + rz * ramp.tx;
+        const facing = Math.sin(kart.heading) * ramp.tx + Math.cos(kart.heading) * ramp.tz;
+        if (along > 0.4 && along < 3.2 && Math.abs(side) < 2.9 && facing > 0.3) {
           kart.vy = 9.5;
           kart.padBoostTimer = Math.max(kart.padBoostTimer, 0.9);
           kart.turboCharge = Math.min(100, kart.turboCharge + 8);

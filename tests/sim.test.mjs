@@ -105,7 +105,7 @@ test('Simulated human webcam player (with jitter and body-lean inertia) stays on
   ctrl.calibrate([makeSyntheticPose({ centerX: 0.5, shoulderWidth: 0.2 })], 1);
 
   const sim = new RaceSimulation({
-    trackId: 'canyon',
+    trackId: 'island',
     mode: '1p',
     players: [{ id: 'p1', name: 'HumanSim', driverId: 'rufus', isAI: false }],
     totalLaps: 3,

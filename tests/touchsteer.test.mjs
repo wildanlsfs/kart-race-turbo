@@ -1,3 +1,4 @@
+import { competentBot } from './harness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { padTarget, stepSteer, SteerPad, PAD_DEADZONE, TAP_KICK } from '../js/touchsteer.js';
@@ -72,6 +73,11 @@ test('SteerPad drives a kart round a bend on the road: proportional pad finishes
     t += dt;
   }
   assert.ok(k.finished, 'lap completed');
-  assert.ok(k.finishTimeSec < 40, `lap time ${k.finishTimeSec}`);
+  // Track-independent: the thumb pad must be within 25 % of what a perfect look-ahead bot does on the same lap.
+  const ref = new RaceSimulation({ trackId: 'canyon', players: [{ id: 'p', driverId: 'rufus', isAI: false }], totalLaps: 1, fillAI: false });
+  ref.countdown = 0; ref.status = 'racing';
+  const rk = ref.karts[0];
+  for (let i = 0; i < 60 * 120 && !rk.finished; i++) ref.step(dt, { p: competentBot(ref, rk, { turbo: false, rng: () => 1 }) });
+  assert.ok(k.finishTimeSec < rk.finishTimeSec * 1.25, `pad lap ${k.finishTimeSec} vs bot ${rk.finishTimeSec}`);
   assert.ok(walls <= 3, `wall touches ${walls}`);
 });
