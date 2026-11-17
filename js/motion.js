@@ -50,6 +50,14 @@ function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+// Angle (degrees) of the line through the two hands, positive when the driver's right hand is lower
+// (= wheel turned clockwise = right turn). The horizontal span is the real one (it shrinks as the wheel
+// turns); it is floored only to stop two hands held on top of each other from producing noise.
+function handLineDeg(lw, rw, sw) {
+  const spanX = Math.max(Math.abs(rw.x - lw.x), sw * 0.25);
+  return (Math.atan2(rw.y - lw.y, spanX) * 180) / Math.PI;
+}
+
 function createSlotState() {
   return {
     calibrated: false,
@@ -57,6 +65,7 @@ function createSlotState() {
     neutralX: 0.5,
     neutralNoseX: 0.5,
     neutralShoulderY: 0.44,
+    neutralWheelDeg: 0,
     shoulderWidth: 0.18,
     lastSeenMs: -9999,
     lastSteer: 0,
@@ -211,6 +220,13 @@ export class MotionController {
     slot.neutralNoseX = pose.landmarks?.[0]?.x ?? pose.centerX;
     slot.neutralShoulderY = pose.shoulderY;
     slot.shoulderWidth = Math.max(0.08, pose.shoulderWidth);
+    {
+      const w1 = pose.landmarks?.[15];
+      const w2 = pose.landmarks?.[16];
+      const ok = (w) => w && (w.visibility === undefined || w.visibility > 0.35);
+      // The hands' angle at calibration is the straight-ahead position of the wheel.
+      slot.neutralWheelDeg = ok(w1) && ok(w2) ? handLineDeg(w1, w2, Math.max(0.08, pose.shoulderWidth)) : 0;
+    }
     slot.steerFilter.reset();
     slot.yFilter.reset();
     slot.brakeStartMs = null;
@@ -401,20 +417,24 @@ export class MotionController {
       : torsoLeanRight;
     const bodyLeanRight = clamp(upperLean * 0.62 + headShiftRight * 0.25 + shoulderTiltRight * 0.25, -1, 1);
 
-    // (e) Invisible steering wheel hand tilt (turning right moves left hand UP / smaller y, right hand DOWN / larger y)
+    // (e) Invisible steering wheel: the angle the hands' line has turned from where it was at
+    // calibration is the wheel angle, 1:1, clamped to +-WHEEL_MAX_DEG. The hands may sit anywhere from
+    // above the chest down to the belly: turning the wheel moves one hand up and the other down.
     let wheelTiltRight = 0;
     const handsInWheelZone = lwOk && rwOk && !handsOverhead && !attack &&
-      lw.y > shMidY - sw * 0.45 && lw.y < shMidY + sw * 1.05 &&
-      rw.y > shMidY - sw * 0.45 && rw.y < shMidY + sw * 1.05;
+      lw.y > shMidY - sw * 0.6 && lw.y < shMidY + sw * 2.2 &&
+      rw.y > shMidY - sw * 0.6 && rw.y < shMidY + sw * 2.2;
 
     if (handsInWheelZone) {
-      // True hand-line angle (degrees, right hand lower = clockwise = right turn), mapped 1:1 to the wheel
-      // (+-60 deg). Coordinates are normalised to the frame, so the vertical difference is compared with the
-      // horizontal hand span; the span is floored so hands held close together cannot make the angle explode.
-      const spanX = Math.max(Math.abs(rw.x - lw.x), sw * 0.9);
-      wheelTiltRight = clamp((Math.atan2(rw.y - lw.y, spanX) * 180 / Math.PI) / WHEEL_MAX_DEG, -1, 1);
+      const raw = handLineDeg(lw, rw, sw);
+      if (Math.abs(slot.lastSteer) < 0.05) {
+        // slow drift of the straight-ahead angle while the wheel is not being turned
+        slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.2 * dtAdapt);
+      }
+      wheelTiltRight = clamp((raw - slot.neutralWheelDeg) / WHEEL_MAX_DEG, -1, 1);
     }
 
+    // Wheel angle (exact, 1:1) plus body lean (for players who also lean into the bend).
     const rawSteer = attack
       ? 0
       : clamp(bodyLeanRight + wheelTiltRight, -1, 1);

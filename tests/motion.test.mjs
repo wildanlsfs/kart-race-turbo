@@ -120,3 +120,40 @@ test('Steering is proportional: a moderate lean does not saturate, and a held le
   assert.ok(early > 0.4, `held lean should steer, got ${early}`);
   assert.ok(late > early * 0.9, `held lean must not fade over 8s (${early} -> ${late})`);
 });
+
+// Real rotation of an imaginary wheel: both hands grip it and the hand line turns about its centre.
+// (The old synthetic "wheelTiltRight" only moved the wrists vertically and hid a bug where this
+// natural motion read as 0.)
+function wheelPose(thetaDeg, radiusSw, { sw = 0.2, cx = 0.5, sy = 0.42 } = {}) {
+  const p = makeSyntheticPose({ centerX: cx, shoulderY: sy, shoulderWidth: sw });
+  const th = (thetaDeg * Math.PI) / 180;
+  const r = radiusSw * sw;
+  const wy = sy + sw * 0.9;
+  p.landmarks[15] = { x: cx + r * Math.cos(th), y: wy - r * Math.sin(th), z: -0.12, visibility: 0.99 };
+  p.landmarks[16] = { x: cx - r * Math.cos(th), y: wy + r * Math.sin(th), z: -0.12, visibility: 0.99 };
+  return p;
+}
+
+test('Turning an imaginary steering wheel steers 1:1 up to 60 degrees, for any hand spacing, both ways', () => {
+  for (const radius of [0.5, 0.75, 1.0, 1.4]) {
+    for (const deg of [-60, -45, -30, -15, 15, 30, 45, 60]) {
+      const ctrl = new MotionController({ autoGas: true });
+      ctrl.calibrate([wheelPose(0, radius)], 1);
+      let out;
+      for (let i = 0; i < 40; i++) out = ctrl.update([wheelPose(deg, radius)], 1000 + i * 33, 1)[0];
+      const wheel = out.steer * 60;
+      assert.ok(Math.sign(wheel) === Math.sign(deg), `radius ${radius} deg ${deg}: wrong direction (${wheel})`);
+      // within the dead zone plus filter slack of the real angle, never beyond +-60
+      assert.ok(Math.abs(wheel - deg) <= 8, `radius ${radius} deg ${deg}: wheel read ${wheel.toFixed(1)}`);
+      assert.ok(Math.abs(wheel) <= 60.001);
+    }
+  }
+});
+
+test('Hands held at the calibrated spot (any height from chest to belly) read as straight', () => {
+  const ctrl = new MotionController({ autoGas: true });
+  ctrl.calibrate([wheelPose(0, 0.75)], 1);
+  let out;
+  for (let i = 0; i < 30; i++) out = ctrl.update([wheelPose(0, 0.75)], 1000 + i * 33, 1)[0];
+  assert.equal(out.steer, 0);
+});
