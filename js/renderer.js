@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import { TRACKS, DRIVERS, getTrackById } from './tracks.js';
+import { bakeFrame, StaticBatcher } from './batch.js';
 
 const MAX_PIXELS = 2_150_000;
 const INK = '#3b2347';
@@ -46,11 +47,39 @@ function inkMat(thick = 0.04) {
   return inkCache.get(thick);
 }
 
+// Baked (vertex-coloured) toon material and baked ink outline material, shared by every merged mesh.
+let _vcToon = null;
+function vcToon() {
+  return _vcToon || (_vcToon = toon('#ffffff', { vertexColors: true }));
+}
+let _bakedInk = null;
+function bakedInk() {
+  if (!_bakedInk) {
+    _bakedInk = new THREE.MeshBasicMaterial({ color: INK, side: THREE.BackSide });
+    _bakedInk.userData.shared = true;
+  }
+  return _bakedInk;
+}
+
+// Add a baked part pair (toon mesh + ink outline mesh) from bakeFrame() output.
+function addBaked(parent, a) {
+  const m = new THREE.Mesh(a.geo, vcToon());
+  m.castShadow = true;
+  parent.add(m);
+  if (a.inkGeo) {
+    const o = new THREE.Mesh(a.inkGeo, bakedInk());
+    o.raycast = () => {};
+    parent.add(o);
+  }
+}
+
 function part(geo, colorOrMat, { outline = 0.04, cast = true, receive = false } = {}) {
   const mat = typeof colorOrMat === 'string' ? toon(colorOrMat) : colorOrMat;
   const m = new THREE.Mesh(geo, mat);
   m.castShadow = cast;
   m.receiveShadow = receive;
+  m.userData.part = true; // bakeable by batch.js
+  m.userData.outline = outline;
   if (outline > 0) {
     const o = new THREE.Mesh(geo, inkMat(outline));
     o.raycast = () => {};
@@ -302,15 +331,22 @@ export class RaceRenderer {
     this.scene.add(this.kartsGroup);
 
     this.kartMeshes = new Map();
-    this.crateMeshes = new Map();
-    this.fruitMeshes = new Map();
+    this.kartAssetCache = new Map(); // driverId -> baked kart geometry (shared, never disposed)
     this.projectileMeshes = new Map();
     this.hazardMeshes = new Map();
     this.currentTrackId = null;
     this.bursts = [];
     this.burstGeo = new THREE.IcosahedronGeometry(0.28, 0);
-    this.burstMats = new Map();
     markShared(this.burstGeo);
+    const burstMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    markShared(burstMat);
+    this.burstMesh = new THREE.InstancedMesh(this.burstGeo, burstMat, 72);
+    this.burstMesh.setColorAt(0, new THREE.Color(1, 1, 1)); // allocates instanceColor
+    this.burstMesh.count = 0;
+    this.burstMesh.frustumCulled = false;
+    this.burstMesh.raycast = () => {};
+    this.burstMesh.userData.cat = 'particles';
+    this.scene.add(this.burstMesh);
     this.fov = 58;
 
     this._setupLights();
@@ -351,14 +387,10 @@ export class RaceRenderer {
     return { geometries: i.memory.geometries, textures: i.memory.textures, calls: i.render.calls, triangles: i.render.triangles };
   }
 
-  adjustResolutionForFps(fps) {
-    if (fps < 46 && this.adaptiveScale > 0.65) {
-      this.adaptiveScale = Math.max(0.65, this.adaptiveScale - 0.08);
-      this.resize();
-    } else if (fps > 57 && this.adaptiveScale < 1.0) {
-      this.adaptiveScale = Math.min(1.0, this.adaptiveScale + 0.04);
-      this.resize();
-    }
+  setAdaptiveScale(scale) {
+    if (scale === this.adaptiveScale) return;
+    this.adaptiveScale = scale;
+    this.resize();
   }
 
   buildTrack(trackId) {
@@ -370,8 +402,6 @@ export class RaceRenderer {
     disposeTree(this.entitiesGroup);
     this.trackGroup.clear();
     this.entitiesGroup.clear();
-    this.crateMeshes.clear();
-    this.fruitMeshes.clear();
     this.projectileMeshes.clear();
     this.hazardMeshes.clear();
 
@@ -445,6 +475,11 @@ export class RaceRenderer {
     roadMesh.receiveShadow = true;
     this.trackGroup.add(roadMesh);
 
+    // Static scenery is baked into a few chunked meshes (curbs, props, gate pillars, ramps) and a
+    // separate coarser set for the distant backdrop (hills, mountains).
+    const scenery = new StaticBatcher();
+    const backdrop = new StaticBatcher();
+
     // 4. Candy-Striped Curbs with Ink Outlines
     const curbGeo = new THREE.BoxGeometry(0.95, 0.26, 2.8);
     const curbMatA = toon(track.theme.curbA);
@@ -457,7 +492,7 @@ export class RaceRenderer {
         const curb = part(curbGeo, mat, { outline: 0.03, cast: false, receive: true });
         curb.position.set(s.x + s.rx * (halfW + 0.5) * side, 0.13, s.z + s.rz * (halfW + 0.5) * side);
         curb.rotation.y = yaw;
-        this.trackGroup.add(curb);
+        scenery.collect(curb);
       }
     }
 
@@ -489,6 +524,7 @@ export class RaceRenderer {
     const banner = part(bannerGeo, new THREE.MeshBasicMaterial({ map: checkerTex }), { outline: 0.05 });
     banner.position.set(0, 7.2, 0);
     startGate.add(banner);
+    scenery.collect(startGate); // pillars + caps are baked; checker line and banner stay
     this.trackGroup.add(startGate);
 
     // 6. Glowing Chevron Boost Pads & Jump Ramps
@@ -509,34 +545,94 @@ export class RaceRenderer {
       m.position.set(r.x, 0.32, r.z);
       m.rotation.y = Math.atan2(r.tx, r.tz);
       m.rotation.x = -0.22;
-      this.trackGroup.add(m);
+      scenery.collect(m);
     }
 
     // 7. Distant Hills, Mountains & Trackside Cartoon Scenery
-    this._buildSceneryProps(track, palette);
+    this._buildSceneryProps(track, palette, scenery, backdrop);
 
-    // 8. Item Crates & Mango Fruits with Leaves
-    for (const c of track.crateSpawns) {
-      const mesh = part(this.shared.crateGeo, this.shared.crateMat, { outline: 0.045 });
-      mesh.position.set(c.x, c.y, c.z);
-      this.crateMeshes.set(c.id, mesh);
-      this.entitiesGroup.add(mesh);
-    }
-    for (const f of track.fruitSpawns) {
-      const grp = new THREE.Group();
-      const body = part(this.shared.fruitGeo, '#ff7a1a', { outline: 0.035 });
-      const leaf = part(this.shared.fruitLeafGeo, '#40c057', { outline: 0.025 });
-      leaf.position.y = 0.55;
-      grp.add(body, leaf);
-      grp.position.set(f.x, f.y, f.z);
-      this.fruitMeshes.set(f.id, grp);
-      this.entitiesGroup.add(grp);
-    }
+    scenery.emit(this.trackGroup, { cell: 90, toonMat: vcToon(), inkMaterial: bakedInk(), cat: 'scenery' });
+    backdrop.emit(this.trackGroup, { cell: 160, toonMat: vcToon(), inkMaterial: bakedInk(), cat: 'backdrop' });
+
+    // 8. Item Crates & Mango Fruits with Leaves: one InstancedMesh per part (matrices written
+    // each frame in render(), inactive ones skipped via count).
+    this._buildPickups(track);
 
     this.renderer.shadowMap.needsUpdate = true;
   }
 
-  _buildSceneryProps(track, palette) {
+  _instanced(geo, mat, n, cast, cat) {
+    const im = new THREE.InstancedMesh(geo, mat, Math.max(1, n));
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.count = 0;
+    im.frustumCulled = false; // instances span the whole lap; the bounding sphere would not track them
+    im.castShadow = cast;
+    im.raycast = () => {};
+    im.userData.cat = cat;
+    this.entitiesGroup.add(im);
+    return im;
+  }
+
+  _buildPickups(track) {
+    this.crateSpawns = new Map(track.crateSpawns.map((c) => [c.id, c]));
+    this.fruitSpawns = new Map(track.fruitSpawns.map((f) => [f.id, f]));
+    const nc = track.crateSpawns.length;
+    const nf = track.fruitSpawns.length;
+    const sh = this.shared;
+    this.crateInst = {
+      body: this._instanced(sh.crateGeo, sh.crateMat, nc, true, 'crates'),
+      ink: this._instanced(sh.crateGeo, inkMat(0.045), nc, false, 'crates'),
+    };
+    this.fruitInst = {
+      body: this._instanced(sh.fruitGeo, toon('#ff7a1a'), nf, true, 'fruits'),
+      bodyInk: this._instanced(sh.fruitGeo, inkMat(0.035), nf, false, 'fruits'),
+      leaf: this._instanced(sh.fruitLeafGeo, toon('#40c057'), nf, true, 'fruits'),
+      leafInk: this._instanced(sh.fruitLeafGeo, inkMat(0.025), nf, false, 'fruits'),
+    };
+  }
+
+  // Write instance matrices for the active crates and fruits (same motion as before).
+  _updatePickups(snapshot, nowSec) {
+    const d = this._dummy || (this._dummy = new THREE.Object3D());
+    let n = 0;
+    const ci = this.crateInst;
+    for (const c of snapshot.crates) {
+      const sp = this.crateSpawns.get(c.id);
+      if (!sp || !c.active) continue;
+      d.position.set(sp.x, c.y + Math.sin(nowSec * 3 + c.x) * 0.12, sp.z);
+      d.rotation.set(0, nowSec * 1.4, 0);
+      d.updateMatrix();
+      ci.body.setMatrixAt(n, d.matrix);
+      ci.ink.setMatrixAt(n, d.matrix);
+      n++;
+    }
+    ci.body.count = ci.ink.count = n;
+    ci.body.instanceMatrix.needsUpdate = ci.ink.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    const fi = this.fruitInst;
+    const leafLocal = new THREE.Matrix4().makeTranslation(0, 0.55, 0);
+    const leafM = new THREE.Matrix4();
+    for (const f of snapshot.fruits) {
+      const sp = this.fruitSpawns.get(f.id);
+      if (!sp || !f.active) continue;
+      d.position.set(sp.x, f.y + Math.sin(nowSec * 4 + f.x) * 0.15, sp.z);
+      d.rotation.set(0, nowSec * 2.0, 0);
+      d.updateMatrix();
+      fi.body.setMatrixAt(n, d.matrix);
+      fi.bodyInk.setMatrixAt(n, d.matrix);
+      leafM.multiplyMatrices(d.matrix, leafLocal);
+      fi.leaf.setMatrixAt(n, leafM);
+      fi.leafInk.setMatrixAt(n, leafM);
+      n++;
+    }
+    for (const k of Object.keys(fi)) {
+      fi[k].count = n;
+      fi[k].instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  _buildSceneryProps(track, palette, scenery, backdrop) {
     // Distant hills & snow-capped peaks around perimeter
     const cx = 60;
     const cz = 5;
@@ -549,7 +645,7 @@ export class RaceRenderer {
       const hill = part(new THREE.SphereGeometry(r, 16, 12), i % 2 === 0 ? palette.hillA : palette.hillB, { outline: 0, cast: false });
       hill.scale.set(1.3, 0.65, 0.9);
       hill.position.set(hx, -r * 0.25, hz);
-      this.trackGroup.add(hill);
+      backdrop.collect(hill);
 
       if (i % 2 === 0) {
         const mh = 55 + (i % 3) * 18;
@@ -560,7 +656,7 @@ export class RaceRenderer {
         const snow = part(new THREE.ConeGeometry(mh * 0.25, mh * 0.38, 7), '#fffdf7', { outline: 0, cast: false });
         snow.position.y = mh * 0.81 - 4;
         mtn.add(cone, snow);
-        this.trackGroup.add(mtn);
+        backdrop.collect(mtn);
       }
     }
 
@@ -605,25 +701,24 @@ export class RaceRenderer {
           gem.position.y = 6.1;
           prop.add(pBase, gem);
         }
-        this.trackGroup.add(prop);
+        scenery.collect(prop);
       }
     }
   }
 
-  _createFacelessKartMesh(kartState) {
-    const driver = DRIVERS.find((d) => d.id === kartState.driverId) || DRIVERS[0];
-    const root = new THREE.Group();
-
-    // Soft blob shadow
-    const blob = new THREE.Mesh(this.shared.blobGeo, this.shared.blobMat);
-    blob.position.y = 0.04;
-    root.add(blob);
-
-    const rig = new THREE.Group(); // handles hop squash & stretch
-    root.add(rig);
+  // Build (once per driver look) the baked kart geometry. The kart is authored as before from
+  // small coloured parts, then each rigid sub-assembly that animates on its own is baked into
+  // one vertex-coloured mesh plus one baked ink outline mesh (see batch.js):
+  //   chassis (incl. rear wheels, steering wheel), front wheel (steers), driver (torso, scarf,
+  //   head, headgear), arm (shared by both sides), dizzy stars.
+  // Wheel spin is dropped: tyres and rims are bodies of revolution, so spinning only shimmered the
+  // 16-gon facets.
+  _kartAssets(driver) {
+    const cached = this.kartAssetCache.get(driver.id);
+    if (cached) return cached;
 
     const bodyGroup = new THREE.Group();
-    rig.add(bodyGroup);
+    bodyGroup.userData.frame = true;
 
     // --- Sculpted Kart Chassis ---
     const mainDeck = part(new THREE.BoxGeometry(1.55, 0.38, 2.55), driver.kartColor, { outline: 0.045 });
@@ -679,40 +774,28 @@ export class RaceRenderer {
     spoilerWing.rotation.x = 0.18;
     bodyGroup.add(spoilerWing);
 
-    // Dual Turbo Flames
-    const flames = new THREE.Group();
-    for (const sx of [-1, 1]) {
-      const outer = new THREE.Mesh(this.shared.flameGeo, this.shared.flameMat);
-      outer.position.set(sx * 0.38, 0.86, -2.05);
-      const inner = new THREE.Mesh(this.shared.flameGeo, this.shared.flameInnerMat);
-      inner.scale.setScalar(0.6);
-      inner.position.set(sx * 0.38, 0.86, -1.9);
-      flames.add(outer, inner);
-    }
-    flames.visible = false;
-    bodyGroup.add(flames);
-
-    // 4 Wide Racing Wheels with White Rims
+    // 4 Wide Racing Wheels with White Rims (rear pair is part of the chassis, front pair steers)
     const tireGeo = new THREE.CylinderGeometry(0.44, 0.44, 0.42, 16);
     tireGeo.rotateZ(Math.PI * 0.5);
     const rimGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.45, 12);
     rimGeo.rotateZ(Math.PI * 0.5);
-    const wheels = [];
-    for (const [wx, wz, scale] of [[-1.06, 1.02, 0.92], [1.06, 1.02, 0.92], [-1.12, -0.96, 1.08], [1.12, -0.96, 1.08]]) {
+    const makeWheel = () => {
       const wGrp = new THREE.Group();
+      wGrp.add(part(tireGeo, '#2b2d42', { outline: 0.04 }), part(rimGeo, '#fffdf7', { outline: 0.02, cast: false }));
+      return wGrp;
+    };
+    for (const [wx, wz, scale] of [[-1.12, -0.96, 1.08], [1.12, -0.96, 1.08]]) {
+      const wGrp = makeWheel();
       wGrp.position.set(wx, 0.44 * scale, wz);
       wGrp.scale.setScalar(scale);
-      const tire = part(tireGeo, '#2b2d42', { outline: 0.04 });
-      const rim = part(rimGeo, '#fffdf7', { outline: 0.02, cast: false });
-      wGrp.add(tire, rim);
       bodyGroup.add(wGrp);
-      wheels.push(wGrp);
     }
+    const frontWheel = makeWheel();
+    frontWheel.userData.frame = true;
 
     // --- Articulated Faceless Driver (Head, Back Hair/Helmet, Torso, Pivoted Arms) ---
     const driverGroup = new THREE.Group();
-    driverGroup.position.set(0, 0.65, -0.12);
-    bodyGroup.add(driverGroup);
+    driverGroup.userData.frame = true;
 
     const torso = part(new THREE.BoxGeometry(0.76, 0.66, 0.52), driver.suitColor, { outline: 0.04 });
     torso.position.y = 0.33;
@@ -750,8 +833,8 @@ export class RaceRenderer {
       band.position.y = 0.26;
       head.add(band);
       const featherGeo = new THREE.BoxGeometry(0.18, 0.55, 0.08);
-      for (const [i, col] of [[-1, '#ff4d6d'], [0, '#ffd166'], [1, '#4cc9f0']]) {
-        const f = part(featherGeo, col, { outline: 0.03 });
+      for (const [i, col2] of [[-1, '#ff4d6d'], [0, '#ffd166'], [1, '#4cc9f0']]) {
+        const f = part(featherGeo, col2, { outline: 0.03 });
         f.position.set(i * 0.2, 0.55, -0.12);
         f.rotation.z = -i * 0.22;
         head.add(f);
@@ -762,33 +845,101 @@ export class RaceRenderer {
       head.add(dome);
     }
 
-    // Articulated Left & Right Arms with White Racing Gloves
-    const makeArm = (sx) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(sx * 0.46, 0.56, 0.05);
-      const sleeve = part(new THREE.CapsuleGeometry(0.11, 0.34, 4, 8), driver.suitColor, { outline: 0.03 });
-      sleeve.rotation.x = Math.PI * 0.5;
-      sleeve.position.z = 0.22;
-      const glove = part(new THREE.SphereGeometry(0.15, 12, 10), '#fffdf7', { outline: 0.03 });
-      glove.position.z = 0.46;
-      pivot.add(sleeve, glove);
-      driverGroup.add(pivot);
-      return pivot;
-    };
-    const leftArm = makeArm(1);
-    const rightArm = makeArm(-1);
+    // Arm: sleeve + white racing glove (identical for both sides; the pivot carries the side)
+    const armPivot = new THREE.Group();
+    armPivot.userData.frame = true;
+    const sleeve = part(new THREE.CapsuleGeometry(0.11, 0.34, 4, 8), driver.suitColor, { outline: 0.03 });
+    sleeve.rotation.x = Math.PI * 0.5;
+    sleeve.position.z = 0.22;
+    const glove = part(new THREE.SphereGeometry(0.15, 12, 10), '#fffdf7', { outline: 0.03 });
+    glove.position.z = 0.46;
+    armPivot.add(sleeve, glove);
 
-    // Spinning Dizzy Stars overhead when hit (like body-runner)
+    // Spinning Dizzy Stars overhead when hit
     const dizzyGroup = new THREE.Group();
-    dizzyGroup.position.y = 2.45;
-    dizzyGroup.visible = false;
-    bodyGroup.add(dizzyGroup);
+    dizzyGroup.userData.frame = true;
     for (let i = 0; i < 3; i++) {
       const st = part(this.shared.starGeo, '#ffd166', { outline: 0.025, cast: false });
       const a = (i / 3) * Math.PI * 2;
       st.position.set(Math.cos(a) * 0.58, 0, Math.sin(a) * 0.58);
       dizzyGroup.add(st);
     }
+
+    // The frames are parented under bodyGroup only to get one tree; bakeFrame skips frame roots.
+    const assets = {
+      chassis: bakeFrame(bodyGroup),
+      wheel: bakeFrame(frontWheel),
+      driver: bakeFrame(driverGroup),
+      arm: bakeFrame(armPivot),
+      dizzy: bakeFrame(dizzyGroup),
+    };
+    for (const a of Object.values(assets)) markShared(a.geo, a.inkGeo);
+    this.kartAssetCache.set(driver.id, assets);
+    return assets;
+  }
+
+  _createFacelessKartMesh(kartState) {
+    const driver = DRIVERS.find((d) => d.id === kartState.driverId) || DRIVERS[0];
+    const assets = this._kartAssets(driver);
+    const root = new THREE.Group();
+    root.userData.cat = 'karts';
+
+    // Soft blob shadow
+    const blob = new THREE.Mesh(this.shared.blobGeo, this.shared.blobMat);
+    blob.position.y = 0.04;
+    root.add(blob);
+
+    const rig = new THREE.Group(); // handles hop squash & stretch
+    root.add(rig);
+
+    const bodyGroup = new THREE.Group();
+    rig.add(bodyGroup);
+    addBaked(bodyGroup, assets.chassis);
+
+    // Dual Turbo Flames
+    const flames = new THREE.Group();
+    for (const sx of [-1, 1]) {
+      const outer = new THREE.Mesh(this.shared.flameGeo, this.shared.flameMat);
+      outer.position.set(sx * 0.38, 0.86, -2.05);
+      const inner = new THREE.Mesh(this.shared.flameGeo, this.shared.flameInnerMat);
+      inner.scale.setScalar(0.6);
+      inner.position.set(sx * 0.38, 0.86, -1.9);
+      flames.add(outer, inner);
+    }
+    flames.visible = false;
+    bodyGroup.add(flames);
+
+    // Front wheels (steer)
+    const wheels = [];
+    for (const wx of [-1.06, 1.06]) {
+      const wGrp = new THREE.Group();
+      wGrp.position.set(wx, 0.44 * 0.92, 1.02);
+      wGrp.scale.setScalar(0.92);
+      addBaked(wGrp, assets.wheel);
+      bodyGroup.add(wGrp);
+      wheels.push(wGrp);
+    }
+
+    const driverGroup = new THREE.Group();
+    driverGroup.position.set(0, 0.65, -0.12);
+    bodyGroup.add(driverGroup);
+    addBaked(driverGroup, assets.driver);
+
+    const makeArm = (sx) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(sx * 0.46, 0.56, 0.05);
+      addBaked(pivot, assets.arm);
+      driverGroup.add(pivot);
+      return pivot;
+    };
+    const leftArm = makeArm(1);
+    const rightArm = makeArm(-1);
+
+    const dizzyGroup = new THREE.Group();
+    dizzyGroup.position.y = 2.45;
+    dizzyGroup.visible = false;
+    bodyGroup.add(dizzyGroup);
+    addBaked(dizzyGroup, assets.dizzy);
 
     // Shield Bubble
     const shieldMesh = new THREE.Mesh(this.shared.shieldGeo, this.shared.shieldMat);
@@ -804,7 +955,6 @@ export class RaceRenderer {
       driverGroup,
       leftArm,
       rightArm,
-      steeringWheel,
       wheels,
       flames,
       dizzyGroup,
@@ -818,24 +968,23 @@ export class RaceRenderer {
   }
 
   // Short, calm particle puff (no screen shake): used for crate smash, hits, shield blocks.
+  // All puff particles are drawn by one InstancedMesh (per-instance colour), one draw call.
   spawnBurst(x, y, z, color = '#ffffff', size = 1) {
     if (!this.webglAvailable) return;
-    if (!this.burstMats.has(color)) {
-      const bm = new THREE.MeshBasicMaterial({ color });
-      markShared(bm);
-      this.burstMats.set(color, bm);
-    }
-    const mat = this.burstMats.get(color);
     const n = 7;
     for (let i = 0; i < n; i++) {
       if (this.bursts.length > 60) break;
-      const m = new THREE.Mesh(this.burstGeo, mat);
       const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
       const sp = (2.5 + Math.random() * 3) * size;
-      m.position.set(x, y, z);
-      m.scale.setScalar(size * (0.8 + Math.random() * 0.8));
-      this.scene.add(m);
-      this.bursts.push({ m, vx: Math.cos(a) * sp, vy: 2 + Math.random() * 3.5, vz: Math.sin(a) * sp, life: 0.55 });
+      this.bursts.push({
+        x, y, z,
+        s: size * (0.8 + Math.random() * 0.8),
+        color: new THREE.Color(color),
+        vx: Math.cos(a) * sp,
+        vy: 2 + Math.random() * 3.5,
+        vz: Math.sin(a) * sp,
+        life: 0.55,
+      });
     }
   }
 
@@ -844,16 +993,32 @@ export class RaceRenderer {
       const b = this.bursts[i];
       b.life -= dt;
       if (b.life <= 0) {
-        this.scene.remove(b.m);
         this.bursts.splice(i, 1);
         continue;
       }
       b.vy -= 12 * dt;
-      b.m.position.x += b.vx * dt;
-      b.m.position.y = Math.max(0.1, b.m.position.y + b.vy * dt);
-      b.m.position.z += b.vz * dt;
-      b.m.scale.multiplyScalar(Math.max(0.2, 1 - 1.6 * dt));
+      b.x += b.vx * dt;
+      b.y = Math.max(0.1, b.y + b.vy * dt);
+      b.z += b.vz * dt;
+      b.s *= Math.max(0.2, 1 - 1.6 * dt);
     }
+    const mesh = this.burstMesh;
+    if (!mesh) return;
+    const d = this._dummy || (this._dummy = new THREE.Object3D());
+    const n = Math.min(this.bursts.length, mesh.instanceMatrix.count);
+    for (let i = 0; i < n; i++) {
+      const b = this.bursts[i];
+      d.position.set(b.x, b.y, b.z);
+      d.scale.setScalar(b.s);
+      d.rotation.set(0, 0, 0);
+      d.updateMatrix();
+      mesh.setMatrixAt(i, d.matrix);
+      mesh.setColorAt(i, b.color);
+    }
+    d.scale.setScalar(1);
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   _updateCameraForKart(camIdx, kart, dt = 1 / 60, isMenuShowcase = false) {
@@ -964,14 +1129,10 @@ export class RaceRenderer {
       m.bodyGroup.rotation.z = k.steerAngle * 0.14;
       m.driverGroup.rotation.z = -k.steerAngle * 0.28;
       m.driverGroup.rotation.x = k.turboActive ? -0.18 : 0;
-      m.steeringWheel.rotation.z = -k.steerAngle * 0.65;
 
-      // Wheel steer & spin
+      // Front wheel steer (spin dropped: tyres are bodies of revolution)
       m.wheels[0].rotation.y = -k.steerAngle * 0.45;
       m.wheels[1].rotation.y = -k.steerAngle * 0.45;
-      for (const w of m.wheels) {
-        w.children[0].rotation.x += k.speed * dt * 1.6;
-      }
 
       // Arm animations: Punch forward, Hands-Up Turbo celebration, or Gripping Steering Wheel
       if (k.punching) {
@@ -1003,26 +1164,7 @@ export class RaceRenderer {
       m.rig.visible = !(k.invuln && !k.spinOut && Math.floor(nowSec * 6) % 2 === 0);
     }
 
-    for (const c of snapshot.crates) {
-      const m = this.crateMeshes.get(c.id);
-      if (m) {
-        m.visible = c.active;
-        if (c.active) {
-          m.rotation.y = nowSec * 1.4;
-          m.position.y = c.y + Math.sin(nowSec * 3 + c.x) * 0.12;
-        }
-      }
-    }
-    for (const f of snapshot.fruits) {
-      const m = this.fruitMeshes.get(f.id);
-      if (m) {
-        m.visible = f.active;
-        if (f.active) {
-          m.rotation.y = nowSec * 2.0;
-          m.position.y = f.y + Math.sin(nowSec * 4 + f.x) * 0.15;
-        }
-      }
-    }
+    this._updatePickups(snapshot, nowSec);
 
     // Projectiles
     const activeProjIds = new Set();
