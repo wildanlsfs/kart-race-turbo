@@ -1156,6 +1156,9 @@ function animate(nowMs) {
 
 requestAnimationFrame(animate);
 
+// Debug-only handle on the renderer (scene, info) for perf probes: only with ?debug in the URL.
+if (isDebug) window.__r = renderer;
+
 window.__game = {
   getMetrics: () => ({
     fps: state.fps,
@@ -1163,6 +1166,7 @@ window.__game = {
     pixelCount: renderer.pixelCount,
     maxPixelBudget: 2_200_000,
     adaptiveScale: renderer.adaptiveScale,
+    ...renderer.getInfo(),
   }),
   getState: () => ({
     screen: state.screen,

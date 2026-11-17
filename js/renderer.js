@@ -318,6 +318,13 @@ export class RaceRenderer {
     this.pixelCount = Math.round(w * dpr * h * dpr);
   }
 
+  // GPU resource counters (three's renderer.info): used by getMetrics() and the leak tests.
+  getInfo() {
+    const i = this.renderer.info;
+    if (!i) return {};
+    return { geometries: i.memory.geometries, textures: i.memory.textures, calls: i.render.calls, triangles: i.render.triangles };
+  }
+
   adjustResolutionForFps(fps) {
     if (fps < 46 && this.adaptiveScale > 0.65) {
       this.adaptiveScale = Math.max(0.65, this.adaptiveScale - 0.08);
