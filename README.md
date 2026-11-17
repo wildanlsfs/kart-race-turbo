@@ -21,7 +21,7 @@ A 3D minimalist multiplayer kart racing game inspired by classic arcade kart rac
 ### Other keys and touch
 
 - `Esc` or `P` pauses a local race (Resume / Restart / Main Menu). The Menu button also pauses first. Pausing is not available in Wi-Fi/LAN races.
-- On touch devices the on-screen buttons are Left / Brake / Right, TURBO and PUNCH (PUNCH fires the held item).
+- On touch devices (tablet or phone) the bottom-left is a big steering pad: put a thumb on it and slide left or right; how far from the middle you are is how hard you steer (a light touch near the middle is a gentle turn, the edge is full lock; lift to go straight). Bottom-right has large BRAKE, TURBO and PUNCH buttons (PUNCH fires the held item). A finger that slides off a pad or button keeps holding it. Multi-touch works, so steer with one thumb while the other holds TURBO. Portrait works but landscape gives a wider view.
 - Comfort mode (top bar) calms the camera: slower follow, smaller field-of-view change, no shake.
 
 ## Racers

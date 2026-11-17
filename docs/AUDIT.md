@@ -81,3 +81,46 @@ Reproduction work first. Instrumented every kart in the Node sim (kart below 4 u
 - 2P fairness: both humans start on the same back row in mirrored lanes with the same rules; P1/P2 get different drivers by design (P2 = first roster entry that is not P1's), so P1 picking Jet makes P2 drive Rufus.
 - The window-blur auto-pause was not exercised with a real focus change.
 - LAN was only exercised by the existing automated server test, not with two real devices.
+
+---
+
+# Third pass (2026-11-17, "kok susah belok ya?" on a tablet)
+
+Method: headless Chrome (Playwright, `channel: chrome`, touch context, deviceScaleFactor 2) with real CDP touch events (multi-touch), at 1024x768, 1180x820, 768x1024 and 844x390. A bot drives full laps through the real DOM using only touch (or keyboard) events, with a 150 ms reaction delay, a few px of thumb wobble and a brief lift about every 3 s. "Before" = commit e63ae4a served from a git worktree on another port. Real tablet and real hands NOT tested: synthetic touch is evidence for the logic only. The bot scripts live in the session scratchpad, not in the repo; the pure steering logic is unit-tested in `tests/touchsteer.test.mjs`.
+
+## I. Why turning felt hard
+Checked one by one:
+1. **FALSE (in Chromium): "finger drifting off the button ends the turn".** `pointerleave` never fired: touch pointers are captured implicitly to the element they started on. Measured on the old build: finger moved 90 px off the left button, steer stayed -1. Pointer capture is now explicit anyway (needed for the pad, harmless for buttons), but this was not the cause. Not verifiable on iOS Safari.
+2. **TRUE (main cause): the input was only full left, nothing, or full right, but the sim turns a human kart as "lane position".** In `sim.js` a human kart's steer value picks the angle of the nose relative to the road (max 0.62 rad) and a pull towards the road centre fights it, so steer v holds the kart at roughly `v * 2 * halfRoad` from the centre. Measured on Palm Cove straight at 29 u/s (road half-width 6.75): steer 0.15 holds 1.9 u off-centre, 0.3 holds 4.1 u, 0.5 holds 6.5 u (the kerb). Full lock reaches the kerb in about 1.5 s; a 0.15 s tap swings the kart 2.3 u and it comes back through -0.5 u. So with three buttons the kart can only be in the middle or on the kerb; any lane change is a timing game, and a held button in a corner rides the kerb and scrubs speed. A proportional input removes that.
+3. **TRUE: touch targets were small and far apart.** Left/brake/right were 64x58 px each (3 % of a 1024 px screen), turbo/punch 116x58, all in the bottom corners, with no sign they had registered.
+4. **FALSE: multi-touch conflicts.** Steer + TURBO + BRAKE with three fingers all registered (old and new build). Context menu did not fire in headless emulation after a 900 ms hold on the old build (page already had `user-select: none`); a real device may differ, so the gesture blocking below is a precaution, not a proven fix.
+5. **Not a cause: sim steering response.** Keyboard (same digital input) has the same behaviour as old touch in every bot number below, and no bot ever left the road or touched a wall (0 off-road, 0 wall events in all runs), because the soft barrier and road assist protect it. The cost of digital steering shows up as lap time and kerb riding, not crashes.
+6. **Webcam on tablet: works, one layout bug found and fixed.** With synthetic poses at 1024x768 and 768x1024: lean 0.4 gives steer 0.23, 0.8 gives 0.74, symmetric; a touch on the pad overrides the camera and lifting it hands steering back. The camera tile sat on top of the minimap and clipped its Calibrate button on touch devices; the tile is wider and the minimap moved under it. No real camera or person was available.
+7. **Portrait:** the old and new layouts both work (screenshots below). A one-time banner now suggests landscape in portrait.
+
+## J. Fix (js/touchsteer.js, js/main.js, index.html, style.css)
+- **Steering pad** bottom-left (40 % of the width, 28 % of the height, clamped): the finger's horizontal position is the steer amount (dead zone around the middle, full lock at 80 % of the half-width), smoothed in `SteerPad`/`stepSteer` (ramp about 0.1 s, release to centre about 0.17 s, 0.35 minimum "tap kick" so a quick tap turns at once). Pointer capture, so sliding off the pad (even off the screen) keeps steering; a second finger on the pad is ignored. Pad lights up yellow with a thumb marker while touched; LEFT / RIGHT labels.
+- **Big BRAKE / TURBO / PUNCH buttons** (about 115-140 x 130 px at 1024x768), pointer captured, pressed state. Brake is no longer in the steering cluster.
+- Context menu, text selection, drag, pinch/gesture events blocked on touch devices; `touch-action: none`, `-webkit-touch-callout: none` on the controls.
+- Pause, blur and menu clear all touch state. Keyboard and webcam code paths unchanged; touch wins over the camera while a finger is on the pad.
+- Tilt steering NOT added (needs an iOS permission flow and a real device to tune; skipped as risk).
+
+## K. Evidence (bot, 1024x768 touch context, 3 tracks x 2 seeds, one lap each, software GL so fps 40-60)
+`follow` = hold the line the road bends along; `weave` = change lane between +4 u and -4 u every 5 s (what a human does to dodge TNT and crates). rms = RMS distance from the wanted lane in units, kerb% = share of the lap within 0.8 u of the kerb.
+
+| task | input | lap time (s) | rms lane error | kerb % | off-road s | wall hits |
+|---|---|---|---|---|---|---|
+| follow | old buttons | 27.63 | 5.86 | 13.7 | 0 | 0 |
+| follow | keyboard | 27.28 | 5.76 | 12.2 | 0 | 0 |
+| follow | new pad | 25.09 | 5.07 | 0.2 | 0 | 0 |
+| weave | old buttons | 33.98 | 3.85 | 13.8 | 0 | 0 |
+| weave | keyboard | 35.87 | 2.96 | 5.1 | 0 | 0 |
+| weave | new pad | 27.18 | 3.19 | 4.4 | 0 | 0 |
+
+So: lap time -9 % (follow) and -20 % (weave) against the old buttons, kerb riding from 13.7 % to 0.2 % (follow). Lane accuracy in weave is about the same as a keyboard and better than the old buttons. The bot is a model of a thumb, not a person; the pad numbers assume the player places the finger sensibly. A node-only check shows the same trend (`tests/touchsteer.test.mjs` drives a canyon lap with the pad model).
+
+## L. Still weak / not verified
+- No real tablet, no real thumbs; whether the pad position mapping feels natural (finger at centre = straight, a thumb that lands at the pad edge = full lock at once) needs a hand test. The dead zone and the 80 % full-lock point are guesses.
+- Long-press context menu, iOS Safari pointer-capture behaviour and double-tap zoom could not be tested.
+- Webcam lean steering still only verified with synthetic poses.
+- Pad covers the lower-left of the road view (translucent); at 1024x768 it can overlap the left wheel of the kart when the kart is far left.

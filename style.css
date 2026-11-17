@@ -1123,3 +1123,7 @@ body.touch .touch-controls img, body.touch #game-canvas { -webkit-user-drag: non
   .touch-actions .touch-btn.accent-brake { min-width: 58px; }
 }
 .rotate-hint { position: fixed; left: 50%; top: 16%; transform: translateX(-50%); z-index: 30; pointer-events: none; padding: 8px 18px; border-radius: 999px; background: rgba(42,26,58,0.85); color: #fff; font-weight: 700; }
+/* Touch + camera: the camera tile used to sit on top of the minimap and clip its Calibrate button */
+body.touch.cam-on .webcam-pip { width: 156px; }
+body.touch.cam-on .minimap-card { top: 204px; }
+@media (max-height: 480px) { body.touch.cam-on .minimap-card { display: none; } }
