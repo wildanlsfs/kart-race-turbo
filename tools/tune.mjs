@@ -61,7 +61,7 @@ if (!isMainThread) {
       const maka = s.maka[2] >= Math.max(s.rufus[2], s.jet[2], s.volt[2]) + 0.15;
       const bounds = ids.every((i) => s[i][0] > 27.5 && s[i][0] < 31.5 && s[i][1] >= 18 && s[i][1] <= 38 && s[i][2] >= 3.4 && s[i][2] <= 5.2);
       const hs = ids.map((i) => s[i][2]); const spread = Math.max(...hs) / Math.min(...hs) < 1.28;
-      const accGap = s.volt[1] >= Math.max(s.rufus[1], s.jet[1], s.maka[1]) + 5 && s.jet[1] <= s.volt[1] - 8;
+      const accGap = s.volt[1] >= Math.max(s.rufus[1], s.jet[1], s.maka[1]) + 3;
       return jetOk && volt && maka && bounds && spread && accGap;
     };
     let bestScore = score(await evalStats(best, 1, SEEDS));
@@ -72,7 +72,7 @@ if (!isMainThread) {
       const k = 1 + Math.floor(Math.random() * 2);
       for (let q = 0; q < k; q++) {
         const id = ids[Math.floor(Math.random() * 4)]; const p = Math.floor(Math.random() * 3);
-        const step = [0.25, 1.5, 0.15][p];
+        const step = [0.35, 2, 0.25][p];
         cand[id][p] = Number((cand[id][p] + (Math.random() * 2 - 1) * step * 2).toFixed(2));
       }
       if (!legal(cand)) continue;
