@@ -119,66 +119,81 @@
     </div>
   </section>
 
-  <!-- Showcase Main Menu (Left-docked panel like jagoan-kotak so the 3D kart shines on the right!) -->
-  <main id="menu-modal" class="menu-showcase">
-    <div class="menu-panel">
-      <div class="comic-logo" aria-label="Kart Race Turbo">
-        <span class="l1">KART RACE</span>
-        <span class="l2">TURBO!</span>
-      </div>
-      <p class="menu-tagline">
-        3D webcam motion kart racer — <b>tilt your hands</b> to steer, <b>raise both hands</b> for Turbo, and <b>punch forward</b> to fire crate weapons!
-      </p>
+  <!-- Arcade start flow: Mode -> Racer -> Circuit -> Ready (full-screen steps, Back on each) -->
+  <main id="menu-modal" class="wizard" data-step="mode">
+    <header class="wz-head">
+      <button id="wz-back" class="btn-soft wz-back" type="button">&larr; Back</button>
+      <ol id="wz-dots" class="wz-dots" aria-label="Steps">
+        <li data-dot="mode">Mode</li><li data-dot="racer">Racer</li><li data-dot="circuit">Circuit</li><li data-dot="ready">Start</li>
+      </ol>
+    </header>
 
-      <!-- Circuit & Driver Pickers -->
-      <div class="picker-section">
-        <div class="picker-title">🏝️ Circuit</div>
-        <div id="track-list" class="choice-row"></div>
-      </div>
-
-      <div class="picker-section">
-        <div class="picker-title">🏎️ Faceless Racer</div>
-        <div id="driver-list" class="choice-row" role="group" aria-label="Choose your racer"></div>
-        <div id="driver-detail" class="driver-detail" aria-live="polite"></div>
-      </div>
-
-      <!-- Big Tactile Play Buttons -->
-      <div class="mode-stack">
-        <button id="btn-mode-1p" class="btn-3d orange-btn" type="button">
-          <span class="btn-ico">🏁</span>
-          <span class="btn-txt">
-            <strong>Single Player Race</strong>
-            <small>1 Player vs 3 AI Karts (Webcam or Keyboard)</small>
-          </span>
+    <!-- Step 1: mode -->
+    <section class="wz-step" data-step="mode" aria-labelledby="wz-t-mode">
+      <div class="comic-logo" aria-label="Kart Race Turbo"><span class="l1">KART RACE</span><span class="l2">TURBO!</span></div>
+      <h1 id="wz-t-mode" class="wz-title">How do you want to play?</h1>
+      <div class="wz-cards wz-cards-3">
+        <button id="wz-mode-solo" class="wz-card wz-item tone-orange" type="button" data-mode="1p">
+          <span class="wz-ico">🏁</span><strong>Solo</strong><small>You against 3 computer racers</small>
         </button>
-
-        <div class="mode-split-row">
-          <button id="btn-mode-2p" class="btn-3d green-btn" type="button">
-            <span class="btn-ico">👥</span>
-            <span class="btn-txt">
-              <strong>2 Players (1 Device)</strong>
-              <small>Split-Screen · 1 Webcam or Keys</small>
-            </span>
-          </button>
-
-          <button id="btn-mode-lan" class="btn-3d blue-btn" type="button">
-            <span class="btn-ico">📡</span>
-            <span class="btn-txt">
-              <strong>Wi-Fi / LAN</strong>
-              <small>Same Network Multiplayer</small>
-            </span>
-          </button>
-        </div>
+        <button id="wz-mode-2p" class="wz-card wz-item tone-green" type="button" data-mode="2p">
+          <span class="wz-ico">👥</span><strong>2 Players</strong><small>Split screen on this one device</small>
+        </button>
+        <button id="wz-mode-lan" class="wz-card wz-item tone-blue" type="button" data-mode="lan">
+          <span class="wz-ico">📡</span><strong>Wi-Fi</strong><small>Race friends on the same network</small>
+        </button>
       </div>
-
-      <!-- Compact Visual Motion Strip -->
       <ul class="moves-strip">
         <li><i>🙌</i><b>Steer</b><span>Tilt wheel / lean</span></li>
         <li><i>🙇</i><b>Brake</b><span>Pull hands / crouch</span></li>
         <li><i>🚀</i><b>Turbo</b><span>Both hands up!</span></li>
         <li><i>👊</i><b>Attack</b><span>Punch forward!</span></li>
       </ul>
-    </div>
+    </section>
+
+    <!-- Step 2: racer (the 3D kart on the right is the live preview) -->
+    <section class="wz-step hidden" data-step="racer" aria-labelledby="wz-t-racer">
+      <h1 id="wz-t-racer" class="wz-title">Choose your racer</h1>
+      <div class="wz-split">
+        <div class="wz-left">
+          <div id="wz-racers" class="wz-racers" role="group" aria-label="Racers"></div>
+          <div id="wz-racer-detail" class="wz-detail" aria-live="polite"></div>
+          <button id="wz-racer-next" class="btn-3d orange-btn wz-next wz-item" type="button"><span class="btn-txt"><strong id="wz-racer-next-txt">Next</strong></span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 3: circuit -->
+    <section class="wz-step hidden" data-step="circuit" aria-labelledby="wz-t-circuit">
+      <h1 id="wz-t-circuit" class="wz-title">Choose your circuit</h1>
+      <div id="wz-tracks" class="wz-cards wz-cards-3 wz-tracks" role="group" aria-label="Circuits"></div>
+      <div class="wz-options">
+        <div id="wz-diff-group" class="wz-opt">
+          <span class="wz-opt-label">Computer racers</span>
+          <div class="wz-seg" id="wz-diff" role="group" aria-label="Difficulty">
+            <button type="button" class="wz-seg-btn wz-item" data-diff="santai">Santai</button>
+            <button type="button" class="wz-seg-btn wz-item" data-diff="normal">Normal</button>
+            <button type="button" class="wz-seg-btn wz-item" data-diff="pro">Pro</button>
+          </div>
+        </div>
+        <div class="wz-opt">
+          <span class="wz-opt-label">Laps</span>
+          <div class="wz-seg" id="wz-laps" role="group" aria-label="Laps">
+            <button type="button" class="wz-seg-btn wz-item" data-laps="1">1</button>
+            <button type="button" class="wz-seg-btn wz-item" data-laps="3">3</button>
+            <button type="button" class="wz-seg-btn wz-item" data-laps="5">5</button>
+          </div>
+        </div>
+      </div>
+      <button id="wz-circuit-next" class="btn-3d orange-btn wz-next wz-item" type="button"><span class="btn-txt"><strong>Next</strong></span></button>
+    </section>
+
+    <!-- Step 4: ready -->
+    <section class="wz-step hidden" data-step="ready" aria-labelledby="wz-t-ready">
+      <h1 id="wz-t-ready" class="wz-title">Ready to race?</h1>
+      <div id="wz-summary" class="wz-summary"></div>
+      <button id="wz-start" class="btn-3d green-btn wz-start wz-item" type="button"><span class="btn-ico">🏁</span><span class="btn-txt"><strong>START!</strong><small id="wz-start-sub">Camera is optional</small></span></button>
+    </section>
   </main>
 
   <!-- Webcam Calibration Modal -->
@@ -255,8 +270,24 @@
           <strong id="room-code-display">KART</strong>
           <span id="room-track-display" class="track-tag">Palm Cove</span>
         </div>
-        <h3>Connected Racers (Remaining slots filled by AI Bots):</h3>
+        <h3>Connected Racers (remaining slots are filled by computer racers):</h3>
         <div id="room-players-list" class="room-players-list"></div>
+        <h3>Your racer</h3>
+        <div id="lan-driver-list" class="lan-pick-row" role="group" aria-label="Your racer"></div>
+        <h3>Race settings <small id="lan-host-note" class="muted-note"></small></h3>
+        <div id="lan-track-list" class="lan-pick-row" role="group" aria-label="Circuit"></div>
+        <div class="wz-options lan-opts">
+          <div class="wz-seg" id="lan-diff" role="group" aria-label="Difficulty">
+            <button type="button" class="wz-seg-btn" data-diff="santai">Santai</button>
+            <button type="button" class="wz-seg-btn" data-diff="normal">Normal</button>
+            <button type="button" class="wz-seg-btn" data-diff="pro">Pro</button>
+          </div>
+          <div class="wz-seg" id="lan-laps" role="group" aria-label="Laps">
+            <button type="button" class="wz-seg-btn" data-laps="1">1 lap</button>
+            <button type="button" class="wz-seg-btn" data-laps="3">3 laps</button>
+            <button type="button" class="wz-seg-btn" data-laps="5">5 laps</button>
+          </div>
+        </div>
         <div class="modal-actions">
           <button id="btn-lan-start" class="btn-3d green-btn" type="button">
             <span class="btn-ico">🏁</span>

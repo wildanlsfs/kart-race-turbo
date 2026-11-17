@@ -3,7 +3,7 @@
 // Live Circuit Mini-Map, Single Player, 2-Player Split-Screen, Wi-Fi/LAN Multiplayer, and window.__game debug hooks.
 
 import { MotionController, makeSyntheticPose } from './motion.js';
-import { RaceSimulation, TRACKS, DRIVERS, getTrackById } from './sim.js';
+import { RaceSimulation, TRACKS, DRIVERS, DIFFICULTIES, DEFAULT_DIFFICULTY, normalizeDifficulty, getTrackById } from './sim.js';
 import { RaceRenderer } from './renderer.js';
 import { SoundFX } from './audio.js';
 import { LanClient } from './net.js';
@@ -25,7 +25,11 @@ const state = {
   screen: 'menu', // 'menu' | 'calibrate' | 'lan_lobby' | 'racing' | 'finished'
   mode: '1p', // '1p' | '2p' | 'lan'
   selectedTrackId: 'island',
-  selectedDriverId: 'rufus',
+  selectedDriverId: 'rufus', // Player 1 / solo racer
+  p2DriverId: 'jet', // Player 2 racer (2P on one screen)
+  previewDriverId: 'rufus', // racer shown in the 3D preview
+  difficulty: DEFAULT_DIFFICULTY,
+  laps: 3,
   autoGas: true,
   webcamEnabled: false,
   webcamReady: false,
@@ -129,13 +133,13 @@ for (const type of ['contextmenu', 'dragstart', 'selectstart', 'gesturestart', '
   }, { passive: false });
 }
 
-// Menu Preview Simulation (updates live when user clicks a circuit or driver!)
+// Menu preview simulation: the 3D scene behind the start flow shows the racer being picked on the chosen circuit.
 let menuPreviewSim = null;
 function rebuildMenuPreview() {
   menuPreviewSim = new RaceSimulation({
     trackId: state.selectedTrackId,
     mode: '1p',
-    players: [{ id: 'showcase', name: 'Showcase', driverId: state.selectedDriverId, isAI: true }],
+    players: [{ id: 'showcase', name: 'Showcase', driverId: state.previewDriverId, isAI: true }],
     totalLaps: 3,
     fillAI: false,
   });
@@ -143,72 +147,6 @@ function rebuildMenuPreview() {
   menuPreviewSim.status = 'racing';
 }
 rebuildMenuPreview();
-
-// Build Menu Track & Driver Cards
-const trackListEl = document.getElementById('track-list');
-const driverListEl = document.getElementById('driver-list');
-
-function renderSelectors() {
-  trackListEl.innerHTML = '';
-  for (const t of TRACKS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `choice-card ${t.id === state.selectedTrackId ? 'selected' : ''}`;
-    btn.innerHTML = `
-      <strong><span class="swatch-dot" style="background:${t.theme.curbA}"></span>${t.name}</strong>
-      <small>${t.subtitle}</small>
-    `;
-    btn.addEventListener('click', () => {
-      state.selectedTrackId = t.id;
-      rebuildMenuPreview();
-      renderSelectors();
-    });
-    trackListEl.appendChild(btn);
-  }
-
-  driverListEl.innerHTML = '';
-  for (const d of DRIVERS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    const selected = d.id === state.selectedDriverId;
-    btn.className = `choice-card ${selected ? 'selected' : ''}`;
-    btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
-    btn.dataset.driver = d.id;
-    btn.style.setProperty('--pick', d.color);
-    btn.innerHTML = `
-      <strong><span class="swatch-dot" style="background:${d.color}"></span>${d.name}</strong>
-      <small>${d.role}</small>
-    `;
-    btn.addEventListener('click', () => {
-      state.selectedDriverId = d.id;
-      rebuildMenuPreview();
-      renderSelectors();
-    });
-    driverListEl.appendChild(btn);
-  }
-  renderDriverDetail();
-}
-
-// Stat bars for the picked driver. Bars are normalised over the roster, so they show the same
-// numbers the simulation uses (topSpeed, accel, handling in tracks.js).
-function statPct(key, value) {
-  const vals = DRIVERS.map((d) => d.stats[key]);
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
-  return Math.round(30 + ((value - lo) / Math.max(1e-6, hi - lo)) * 70);
-}
-
-function renderDriverDetail() {
-  const el = document.getElementById('driver-detail');
-  if (!el) return;
-  const d = DRIVERS.find((x) => x.id === state.selectedDriverId) || DRIVERS[0];
-  const other = DRIVERS.find((x) => x.id !== d.id);
-  const bar = (label, key) => `<span class="stat"><i>${label}</i><b><u style="width:${statPct(key, d.stats[key])}%"></u></b></span>`;
-  el.innerHTML = `<strong style="color:${d.color}">${d.name}</strong> <em>${d.role}</em>`
-    + bar('Speed', 'topSpeed') + bar('Accel', 'accel') + bar('Grip', 'handling')
-    + `<small>2P: Player 2 drives ${other ? other.name : '-'}</small>`;
-}
-renderSelectors();
 
 // Modal visibility switcher
 const modals = {
@@ -237,6 +175,257 @@ function setScreen(screenName) {
   }
 }
 setScreen('menu');
+
+// ===== Arcade start flow: Mode -> Racer -> Circuit -> Ready =====
+const LS_CHOICES = 'krt-choices';
+const wizEl = document.getElementById('menu-modal');
+const wiz = { step: 'mode', pick: 1 };
+
+function saveChoices() {
+  try {
+    localStorage.setItem(LS_CHOICES, JSON.stringify({
+      mode: state.mode, p1: state.selectedDriverId, p2: state.p2DriverId, track: state.selectedTrackId, difficulty: state.difficulty, laps: state.laps,
+    }));
+  } catch (_) {}
+}
+function loadChoices() {
+  try {
+    const c = JSON.parse(localStorage.getItem(LS_CHOICES) || 'null');
+    if (!c || typeof c !== 'object') return;
+    if (DRIVERS.some((d) => d.id === c.p1)) state.selectedDriverId = c.p1;
+    if (DRIVERS.some((d) => d.id === c.p2)) state.p2DriverId = c.p2;
+    if (TRACKS.some((t) => t.id === c.track)) state.selectedTrackId = c.track;
+    state.difficulty = normalizeDifficulty(c.difficulty);
+    if ([1, 3, 5].includes(Number(c.laps))) state.laps = Number(c.laps);
+    if (c.mode === '1p' || c.mode === '2p') state.mode = c.mode;
+  } catch (_) {}
+}
+function ensureP2() {
+  if (state.p2DriverId === state.selectedDriverId || !DRIVERS.some((d) => d.id === state.p2DriverId)) {
+    state.p2DriverId = (DRIVERS.find((d) => d.id !== state.selectedDriverId) || DRIVERS[0]).id;
+  }
+}
+loadChoices();
+ensureP2();
+state.previewDriverId = state.selectedDriverId;
+rebuildMenuPreview();
+
+// Stat bars: normalised over the roster, from the same numbers the simulation uses.
+function statPct(key, value) {
+  const vals = DRIVERS.map((d) => d.stats[key]);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  return Math.round(25 + ((value - lo) / Math.max(1e-6, hi - lo)) * 75);
+}
+const statBars = (d) => [['Speed', 'topSpeed'], ['Accel', 'accel'], ['Grip', 'handling']]
+  .map(([label, key]) => `<span class="wz-bar"><i>${label}</i><b><u style="width:${statPct(key, d.stats[key])}%"></u></b></span>`).join('');
+
+// -- racer cards
+const wzRacersEl = document.getElementById('wz-racers');
+function buildRacerCards() {
+  wzRacersEl.innerHTML = '';
+  for (const d of DRIVERS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wz-racer wz-item';
+    btn.dataset.driver = d.id;
+    btn.style.setProperty('--pick', d.color);
+    btn.innerHTML = `<strong><span class="swatch-dot" style="background:${d.color}"></span>${d.name}</strong><em>${d.role}</em><span class="wz-bars">${statBars(d)}</span><span class="tag hidden"></span>`;
+    btn.addEventListener('click', () => pickRacer(d.id));
+    wzRacersEl.appendChild(btn);
+  }
+}
+const currentPickId = () => (wiz.pick === 2 ? state.p2DriverId : state.selectedDriverId);
+function pickRacer(id) {
+  if (wiz.pick === 2 && id === state.selectedDriverId) return; // the two players cannot drive the same racer
+  if (wiz.pick === 2) state.p2DriverId = id; else { state.selectedDriverId = id; ensureP2(); }
+  state.previewDriverId = id;
+  rebuildMenuPreview();
+  updateRacerCards();
+  saveChoices();
+}
+function updateRacerCards() {
+  const cur = currentPickId();
+  for (const btn of wzRacersEl.children) {
+    const id = btn.dataset.driver;
+    const taken = wiz.pick === 2 && id === state.selectedDriverId;
+    btn.classList.toggle('selected', id === cur);
+    btn.classList.toggle('taken', taken);
+    btn.setAttribute('aria-pressed', id === cur ? 'true' : 'false');
+    btn.setAttribute('aria-disabled', taken ? 'true' : 'false');
+    const tag = btn.querySelector('.tag');
+    tag.classList.toggle('hidden', !taken);
+    tag.textContent = taken ? 'Player 1' : '';
+  }
+  const d = DRIVERS.find((x) => x.id === cur) || DRIVERS[0];
+  document.getElementById('wz-racer-detail').innerHTML = `<span style="color:${d.color}">${d.name}</span> · ${d.role}`;
+  const who = state.mode === '2p' ? `Player ${wiz.pick}` : '';
+  document.getElementById('wz-t-racer').textContent = state.mode === '2p' ? `${who}: choose your racer` : 'Choose your racer';
+  document.getElementById('wz-racer-next-txt').textContent = state.mode === '2p' && wiz.pick === 1 ? 'Next: Player 2' : 'Next: circuit';
+}
+
+// -- circuit cards (with the real track shape drawn from the same samples the sim uses)
+const wzTracksEl = document.getElementById('wz-tracks');
+function drawTrackShape(cv, track) {
+  const g = cv.getContext('2d');
+  const w = cv.width; const h = cv.height;
+  g.clearRect(0, 0, w, h);
+  let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
+  for (const s of track.samples) { minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x); minZ = Math.min(minZ, s.z); maxZ = Math.max(maxZ, s.z); }
+  const pad = 14;
+  const sc = Math.min((w - pad * 2) / Math.max(1, maxX - minX), (h - pad * 2) / Math.max(1, maxZ - minZ));
+  const ox = (w - (maxX - minX) * sc) / 2 - minX * sc;
+  const oz = (h - (maxZ - minZ) * sc) / 2 - minZ * sc;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath();
+  track.samples.forEach((s, i) => { const x = ox + s.x * sc; const y = oz + s.z * sc; if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); });
+  g.closePath();
+  g.strokeStyle = '#2a1a3a'; g.lineWidth = 11; g.stroke();
+  g.strokeStyle = track.theme.road; g.lineWidth = 7; g.stroke();
+  const s0 = track.samples[0];
+  g.fillStyle = '#fff'; g.strokeStyle = '#2a1a3a'; g.lineWidth = 2;
+  g.beginPath(); g.arc(ox + s0.x * sc, oz + s0.z * sc, 6, 0, Math.PI * 2); g.fill(); g.stroke();
+}
+function buildTrackCards() {
+  wzTracksEl.innerHTML = '';
+  for (const t of TRACKS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wz-card wz-track wz-item';
+    btn.dataset.track = t.id;
+    btn.innerHTML = `<canvas width="230" height="172"></canvas><strong>${t.name}</strong>
+      <span class="wz-meta"><span class="wz-chip ${t.tag.toLowerCase()}">${t.tag}</span><span class="wz-chip">${Math.round(t.totalLength / 10) * 10} m</span></span>
+      <small class="wz-mech">${t.mechanic}</small>`;
+    drawTrackShape(btn.querySelector('canvas'), t);
+    btn.addEventListener('click', () => {
+      state.selectedTrackId = t.id;
+      rebuildMenuPreview();
+      updateCircuitStep();
+      saveChoices();
+    });
+    wzTracksEl.appendChild(btn);
+  }
+}
+function updateCircuitStep() {
+  for (const btn of wzTracksEl.children) {
+    const on = btn.dataset.track === state.selectedTrackId;
+    btn.classList.toggle('selected', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  for (const b of document.querySelectorAll('#wz-diff .wz-seg-btn')) b.classList.toggle('selected', b.dataset.diff === state.difficulty);
+  for (const b of document.querySelectorAll('#wz-laps .wz-seg-btn')) b.classList.toggle('selected', Number(b.dataset.laps) === state.laps);
+}
+for (const b of document.querySelectorAll('#wz-diff .wz-seg-btn')) b.addEventListener('click', () => { state.difficulty = normalizeDifficulty(b.dataset.diff); updateCircuitStep(); saveChoices(); });
+for (const b of document.querySelectorAll('#wz-laps .wz-seg-btn')) b.addEventListener('click', () => { state.laps = Number(b.dataset.laps); updateCircuitStep(); saveChoices(); });
+
+function renderSummary() {
+  const d1 = DRIVERS.find((d) => d.id === state.selectedDriverId);
+  const d2 = DRIVERS.find((d) => d.id === state.p2DriverId);
+  const t = getTrackById(state.selectedTrackId);
+  const dot = (d) => `<i class="swatch-dot" style="background:${d.color}"></i>`;
+  const rows = [
+    ['Mode', state.mode === '2p' ? '2 Players, one screen' : 'Solo vs computer'],
+    [state.mode === '2p' ? 'Player 1' : 'Racer', `${dot(d1)}${d1.name}`],
+  ];
+  if (state.mode === '2p') rows.push(['Player 2', `${dot(d2)}${d2.name}`]);
+  rows.push(['Circuit', `${t.name} (${Math.round(t.totalLength / 10) * 10} m)`], ['Computer racers', DIFFICULTIES[state.difficulty].name], ['Laps', String(state.laps)]);
+  document.getElementById('wz-summary').innerHTML = rows.map(([k, v]) => `<div class="wz-sum-row"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+// -- step machine
+const WZ_ORDER = ['mode', 'racer', 'circuit', 'ready'];
+function wizGo(step, pick = 1) {
+  wiz.step = step;
+  wiz.pick = pick;
+  wizEl.dataset.step = step;
+  for (const sec of wizEl.querySelectorAll('.wz-step')) sec.classList.toggle('hidden', sec.dataset.step !== step);
+  const idx = WZ_ORDER.indexOf(step);
+  for (const li of wizEl.querySelectorAll('.wz-dots li')) {
+    const i = WZ_ORDER.indexOf(li.dataset.dot);
+    li.classList.toggle('on', i === idx);
+    li.classList.toggle('done', i < idx);
+  }
+  const p1 = state.selectedDriverId;
+  state.previewDriverId = step === 'racer' ? currentPickId() : p1;
+  if (step === 'racer') updateRacerCards();
+  if (step === 'circuit') updateCircuitStep();
+  if (step === 'ready') {
+    renderSummary();
+    document.getElementById('wz-start-sub').textContent = state.mode === '2p' ? 'Camera is optional - keyboard works for both' : 'Camera is optional';
+  }
+  rebuildMenuPreview();
+  setTimeout(() => focusStepDefault(), 30);
+}
+function focusStepDefault() {
+  if (state.screen !== 'menu') return;
+  const sec = wizEl.querySelector(`.wz-step[data-step="${wiz.step}"]`);
+  if (!sec) return;
+  const target = sec.querySelector('.selected.wz-item') || sec.querySelector('.wz-item');
+  if (target) { try { target.focus({ preventScroll: true }); } catch (_) {} }
+}
+function wizBack() {
+  if (wiz.step === 'racer') return wiz.pick === 2 ? wizGo('racer', 1) : wizGo('mode');
+  if (wiz.step === 'circuit') return wizGo('racer', state.mode === '2p' ? 2 : 1);
+  if (wiz.step === 'ready') return wizGo('circuit');
+}
+function wizNext() {
+  if (wiz.step === 'racer') return state.mode === '2p' && wiz.pick === 1 ? wizGo('racer', 2) : wizGo('circuit');
+  if (wiz.step === 'circuit') return wizGo('ready');
+}
+function chooseMode(mode) {
+  state.mode = mode;
+  setScreen('menu');
+  if (mode === 'lan') {
+    lanJoinViewEl.classList.remove('hidden');
+    lanRoomViewEl.classList.add('hidden');
+    setScreen('lan_lobby');
+    refreshLanLobby();
+  } else {
+    ensureP2();
+    wizGo('racer', 1);
+  }
+  saveChoices();
+}
+for (const b of wizEl.querySelectorAll('[data-mode]')) b.addEventListener('click', () => chooseMode(b.dataset.mode));
+document.getElementById('wz-back').addEventListener('click', wizBack);
+document.getElementById('wz-racer-next').addEventListener('click', wizNext);
+document.getElementById('wz-circuit-next').addEventListener('click', wizNext);
+document.getElementById('wz-start').addEventListener('click', () => {
+  saveChoices();
+  openCalibration(() => startLocalRace(state.mode));
+});
+buildRacerCards();
+buildTrackCards();
+updateCircuitStep();
+
+// Keyboard: arrows move between big buttons (and pick racers), Enter confirms, Esc goes back.
+window.addEventListener('keydown', (e) => {
+  if (state.screen !== 'menu') return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  const sec = wizEl.querySelector(`.wz-step[data-step="${wiz.step}"]`);
+  const items = [...sec.querySelectorAll('.wz-item')].filter((el) => !el.disabled && !el.classList.contains('taken'));
+  const cur = items.indexOf(document.activeElement);
+  if (e.code === 'Escape') { e.preventDefault(); wizBack(); return; }
+  if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.code)) {
+    e.preventDefault();
+    if (!items.length) return;
+    const dir = e.code === 'ArrowLeft' || e.code === 'ArrowUp' ? -1 : 1;
+    const next = items[cur < 0 ? 0 : (cur + dir + items.length) % items.length];
+    next.focus({ preventScroll: true });
+    if (next.classList.contains('wz-racer') || next.classList.contains('wz-track')) next.click();
+    return;
+  }
+  if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+    const a = document.activeElement;
+    if (a && a.classList && a.classList.contains('wz-racer')) { e.preventDefault(); pickRacer(a.dataset.driver); wizNext(); return; }
+    if (a && a.classList && a.classList.contains('wz-track')) { e.preventDefault(); a.click(); wizNext(); return; }
+    if (!a || a === document.body || !a.classList.contains('wz-item')) {
+      e.preventDefault();
+      const primary = sec.querySelector('.wz-next, .wz-start');
+      if (primary) primary.click(); else if (items[0]) items[0].click();
+    }
+  }
+});
 
 // Top Utility Buttons
 const btnAutoGas = document.getElementById('btn-auto-gas');
@@ -287,6 +476,7 @@ function leaveToMenu() {
   state.sim = null;
   setPaused(false);
   setScreen('menu');
+  wizGo('mode');
 }
 // In a local race the Menu button pauses first (a stray tap must not throw the race away).
 btnMenuReturn.addEventListener('click', () => {
@@ -690,8 +880,9 @@ document.getElementById('btn-recalibrate').addEventListener('click', async () =>
 // Start Local Race (1P or 2P Split-Screen)
 function startLocalRace(mode) {
   state.mode = mode;
+  ensureP2();
   const p1Driver = state.selectedDriverId;
-  const p2Driver = DRIVERS.find((d) => d.id !== p1Driver)?.id || 'jet';
+  const p2Driver = state.p2DriverId;
   const players = mode === '2p'
     ? [
         { id: 'p1', name: 'Player 1', driverId: p1Driver, isAI: false },
@@ -703,7 +894,8 @@ function startLocalRace(mode) {
     trackId: state.selectedTrackId,
     mode,
     players,
-    totalLaps: 3,
+    totalLaps: state.laps,
+    difficulty: state.difficulty,
     fillAI: true,
   });
   renderer.camStates[0].initialized = false;
@@ -713,16 +905,6 @@ function startLocalRace(mode) {
   setScreen('racing');
   if (document.body.classList.contains('touch') && innerHeight > innerWidth && mode !== '2p') showBanner('Turn the tablet sideways for a wider view', 'info', 3000);
 }
-
-document.getElementById('btn-mode-1p').addEventListener('click', () => {
-  state.mode = '1p';
-  openCalibration(() => startLocalRace('1p'));
-});
-
-document.getElementById('btn-mode-2p').addEventListener('click', () => {
-  state.mode = '2p';
-  openCalibration(() => startLocalRace('2p'));
-});
 
 // Wi-Fi / LAN Multiplayer Wiring
 const lanErrorEl = document.getElementById('lan-error');
@@ -768,6 +950,7 @@ const lanClient = new LanClient({
       roomPlayersListEl.appendChild(row);
     }
     btnLanStart.style.display = room.hostId === myPlayerId ? 'flex' : 'none';
+    renderLanPickers(room, myPlayerId);
   },
   onSnapshot: (snapshot, myPlayerId) => {
     state.lanPlayerId = myPlayerId;
@@ -784,6 +967,44 @@ const lanClient = new LanClient({
   },
   onError: (msg) => showLanError(msg),
 });
+
+// Lobby: every player picks their own racer; the host picks circuit, difficulty and laps.
+const lanDriverListEl = document.getElementById('lan-driver-list');
+const lanTrackListEl = document.getElementById('lan-track-list');
+function renderLanPickers(room, myId) {
+  const isHost = room.hostId === myId;
+  const me = room.players.find((p) => p.id === myId);
+  if (me && DRIVERS.some((d) => d.id === me.driverId)) state.selectedDriverId = me.driverId;
+  lanDriverListEl.innerHTML = '';
+  for (const d of DRIVERS) {
+    const owner = room.players.find((p) => p.connected && p.driverId === d.id);
+    const takenByOther = owner && owner.id !== myId;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `wz-racer${me && me.driverId === d.id ? ' selected' : ''}${takenByOther ? ' taken' : ''}`;
+    btn.dataset.driver = d.id;
+    btn.disabled = Boolean(takenByOther);
+    btn.innerHTML = `<strong><span class="swatch-dot" style="background:${d.color}"></span>${d.name}</strong><em>${takenByOther ? owner.name : d.role}</em>`;
+    btn.addEventListener('click', () => lanClient.selectDriver(d.id));
+    lanDriverListEl.appendChild(btn);
+  }
+  lanTrackListEl.innerHTML = '';
+  for (const t of TRACKS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `wz-card${room.trackId === t.id ? ' selected' : ''}`;
+    btn.dataset.track = t.id;
+    btn.disabled = !isHost;
+    btn.innerHTML = `<strong>${t.name}</strong><small>${t.tag} · ${Math.round(t.totalLength / 10) * 10} m</small>`;
+    btn.addEventListener('click', () => lanClient.selectTrack(t.id));
+    lanTrackListEl.appendChild(btn);
+  }
+  for (const b of document.querySelectorAll('#lan-diff .wz-seg-btn')) { b.classList.toggle('selected', b.dataset.diff === room.difficulty); b.disabled = !isHost; }
+  for (const b of document.querySelectorAll('#lan-laps .wz-seg-btn')) { b.classList.toggle('selected', Number(b.dataset.laps) === room.laps); b.disabled = !isHost; }
+  document.getElementById('lan-host-note').textContent = isHost ? '(you are the host: pick the circuit)' : '(the host picks the circuit)';
+}
+for (const b of document.querySelectorAll('#lan-diff .wz-seg-btn')) b.addEventListener('click', () => lanClient.setOptions({ difficulty: b.dataset.diff }));
+for (const b of document.querySelectorAll('#lan-laps .wz-seg-btn')) b.addEventListener('click', () => lanClient.setOptions({ laps: Number(b.dataset.laps) }));
 
 async function refreshLanLobby() {
   showLanError('');
@@ -814,17 +1035,10 @@ async function refreshLanLobby() {
   }
 }
 
-document.getElementById('btn-mode-lan').addEventListener('click', () => {
-  state.mode = 'lan';
-  lanJoinViewEl.classList.remove('hidden');
-  lanRoomViewEl.classList.add('hidden');
-  setScreen('lan_lobby');
-  refreshLanLobby();
-});
-
 document.getElementById('btn-lan-back').addEventListener('click', () => {
   lanClient.leaveRoom();
   setScreen('menu');
+  wizGo('mode');
 });
 
 document.getElementById('btn-lan-refresh').addEventListener('click', refreshLanLobby);
@@ -835,6 +1049,8 @@ document.getElementById('btn-lan-create').addEventListener('click', () => {
     name,
     driverId: state.selectedDriverId,
     trackId: state.selectedTrackId,
+    difficulty: state.difficulty,
+    laps: state.laps,
   }).catch((e) => showLanError(e.message));
 });
 
@@ -869,6 +1085,8 @@ document.getElementById('btn-lan-leave').addEventListener('click', () => {
 
 // Combine Webcam Motion Input + Keyboard/Touch Input
 let touchSteerValue = 0;
+let frameDt = 1 / 60;
+const kbSteerSmooth = [0, 0]; // keyboard steering ramps in and out instead of snapping to full lock
 function buildCombinedInput(playerIdx, motionInput) {
   const isP1 = playerIdx === 0;
   const kbForward = isP1
@@ -890,11 +1108,18 @@ function buildCombinedInput(playerIdx, motionInput) {
     ? (keys.has('KeyF') || keys.has('KeyE') || touchHeld.has('attack'))
     : (keys.has('Enter') || keys.has('KeyK'));
 
-  const kbSteer = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
+  const kbRaw = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
+  {
+    const v = kbSteerSmooth[playerIdx] || 0;
+    const rate = kbRaw !== 0 ? 9 : 16;
+    const nv = v + (kbRaw - v) * Math.min(1, rate * frameDt);
+    kbSteerSmooth[playerIdx] = kbRaw === 0 && Math.abs(nv) < 0.03 ? 0 : nv;
+  }
+  const kbSteer = kbSteerSmooth[playerIdx];
   const padSteer = isP1 && state.mode !== '2p' ? touchSteerValue : 0;
   const useMotion = motionInput && motionInput.visible;
 
-  const steer = kbSteer !== 0 ? kbSteer : (Math.abs(padSteer) > 0.02 ? padSteer : (useMotion ? motionInput.steer : 0));
+  const steer = Math.abs(kbSteer) > 0.001 ? kbSteer : (Math.abs(padSteer) > 0.02 ? padSteer : (useMotion ? motionInput.steer : 0));
   const brake = kbBrake || Boolean(useMotion && motionInput.brake);
   const reverse = kbBrake || Boolean(useMotion && motionInput.reverse);
   const throttle = brake ? 0 : ((kbForward || state.autoGas || (useMotion && motionInput.throttle > 0)) ? 1 : 0);
@@ -1044,7 +1269,10 @@ document.getElementById('btn-race-again').addEventListener('click', () => {
   if (state.mode === 'lan') {
     setScreen('lan_lobby');
   } else {
-    startLocalRace(state.mode);
+    // Race Again: back to the circuit step with the same racer(s)
+    state.sim = null;
+    setScreen('menu');
+    wizGo('circuit');
   }
 });
 
@@ -1069,6 +1297,7 @@ function animate(nowMs) {
   }
   lastFrameMs = nowMs;
   const dt = Math.min(0.05, Math.max(0.001, rawDt));
+  frameDt = dt;
 
   // Displayed FPS: frames per second over the last half second (true rate, no 1/dt averaging).
   fpsFrames += 1;
@@ -1165,6 +1394,19 @@ requestAnimationFrame(animate);
 if (isDebug) window.__r = renderer;
 
 window.__game = {
+  // Debug only (?debug): park the local race kart at lap fraction s / lateral offset and freeze the sim, for screenshots.
+  placeKart: (sFrac, lateral = 0, behindMeters = 0) => {
+    if (!isDebug || !state.sim) return false;
+    const k = state.sim.karts.find((q) => q.id === 'p1');
+    const tr = state.sim.track;
+    const pt = tr.getPointAt(sFrac - behindMeters / tr.totalLength);
+    k.x = pt.x + pt.rx * lateral; k.z = pt.z + pt.rz * lateral; k.heading = Math.atan2(pt.tx, pt.tz); k.speed = 0; k.y = 0;
+    state.sim.status = 'racing'; state.sim.countdown = 0;
+    state.paused = true;
+    state.lastSnapshot = state.sim.getSnapshot();
+    renderer.camStates[0].initialized = false;
+    return true;
+  },
   getMetrics: () => ({
     fps: state.fps,
     poseMs: state.poseMs,
@@ -1178,6 +1420,11 @@ window.__game = {
     mode: state.mode,
     selectedTrackId: state.selectedTrackId,
     selectedDriverId: state.selectedDriverId,
+    p2DriverId: state.p2DriverId,
+    difficulty: state.difficulty,
+    laps: state.laps,
+    wizard: { step: wiz.step, pick: wiz.pick },
+    lanPlayerId: state.lanPlayerId,
     autoGas: state.autoGas,
     snapshot: state.lastSnapshot,
     paused: state.paused,
@@ -1186,6 +1433,7 @@ window.__game = {
   startMode: (mode = '1p', trackId = 'island', driverId = 'rufus') => {
     state.selectedTrackId = trackId;
     state.selectedDriverId = driverId;
+    ensureP2();
     startLocalRace(mode);
     if (state.sim) {
       state.sim.countdown = 0;
