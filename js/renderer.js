@@ -23,7 +23,9 @@ const matCache = new Map();
 function toon(color, extra = {}) {
   const key = color + JSON.stringify(extra);
   if (!matCache.has(key)) {
-    matCache.set(key, new THREE.MeshToonMaterial({ color, gradientMap: toonRamp, ...extra }));
+    const m = new THREE.MeshToonMaterial({ color, gradientMap: toonRamp, ...extra });
+    m.userData.shared = true;
+    matCache.set(key, m);
   }
   return matCache.get(key);
 }
@@ -38,6 +40,7 @@ function inkMat(thick = 0.04) {
         s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normalize(normal) * thick;');
     };
     m.customProgramCacheKey = () => `ink_${thick}`;
+    m.userData.shared = true;
     inkCache.set(thick, m);
   }
   return inkCache.get(thick);
@@ -54,6 +57,25 @@ function part(geo, colorOrMat, { outline = 0.04, cast = true, receive = false } 
     m.add(o);
   }
   return m;
+}
+
+// Free GPU resources of a subtree that is being thrown away. Anything flagged userData.shared
+// (cached materials, shared geometries) is kept; everything else (per-build geometry, canvas
+// textures, one-off materials) is disposed so rebuilding a track or kart does not leak.
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.isInstancedMesh) o.dispose();
+    if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
+    for (const m of [].concat(o.material || [])) {
+      if (m.userData.shared) continue;
+      if (m.map) m.map.dispose();
+      m.dispose();
+    }
+  });
+}
+
+function markShared(...objs) {
+  for (const o of objs) if (o) o.userData.shared = true;
 }
 
 function canvasTex(w, h, drawFn, repeat = [1, 1]) {
@@ -267,14 +289,17 @@ export class RaceRenderer {
       flameInnerMat: new THREE.MeshBasicMaterial({ color: 0xff4d6d }),
       starGeo: new THREE.OctahedronGeometry(0.22, 0),
     };
+    markShared(...Object.values(this.shared));
     this.shared.rocketGeo.rotateX(Math.PI * 0.5);
     this.shared.blobGeo.rotateX(-Math.PI * 0.5);
     this.shared.flameGeo.rotateX(-Math.PI * 0.5);
 
     this.trackGroup = new THREE.Group();
     this.entitiesGroup = new THREE.Group();
+    this.kartsGroup = new THREE.Group(); // persistent: kart meshes outlive track rebuilds
     this.scene.add(this.trackGroup);
     this.scene.add(this.entitiesGroup);
+    this.scene.add(this.kartsGroup);
 
     this.kartMeshes = new Map();
     this.crateMeshes = new Map();
@@ -285,6 +310,7 @@ export class RaceRenderer {
     this.bursts = [];
     this.burstGeo = new THREE.IcosahedronGeometry(0.28, 0);
     this.burstMats = new Map();
+    markShared(this.burstGeo);
     this.fov = 58;
 
     this._setupLights();
@@ -340,9 +366,10 @@ export class RaceRenderer {
     this.currentTrackId = trackId;
     const track = getTrackById(trackId);
 
+    disposeTree(this.trackGroup);
+    disposeTree(this.entitiesGroup);
     this.trackGroup.clear();
     this.entitiesGroup.clear();
-    this.kartMeshes.clear();
     this.crateMeshes.clear();
     this.fruitMeshes.clear();
     this.projectileMeshes.clear();
@@ -769,7 +796,7 @@ export class RaceRenderer {
     shieldMesh.visible = false;
     bodyGroup.add(shieldMesh);
 
-    this.entitiesGroup.add(root);
+    this.kartsGroup.add(root);
     const entry = {
       root,
       rig,
@@ -793,7 +820,11 @@ export class RaceRenderer {
   // Short, calm particle puff (no screen shake): used for crate smash, hits, shield blocks.
   spawnBurst(x, y, z, color = '#ffffff', size = 1) {
     if (!this.webglAvailable) return;
-    if (!this.burstMats.has(color)) this.burstMats.set(color, new THREE.MeshBasicMaterial({ color }));
+    if (!this.burstMats.has(color)) {
+      const bm = new THREE.MeshBasicMaterial({ color });
+      markShared(bm);
+      this.burstMats.set(color, bm);
+    }
     const mat = this.burstMats.get(color);
     const n = 7;
     for (let i = 0; i < n; i++) {
@@ -899,13 +930,19 @@ export class RaceRenderer {
     this._updateBursts(dt);
     if (this.padTex) this.padTex.offset.y = -((nowSec * 1.6) % 1);
 
-    // A kart mesh is tied to its driver look: drop meshes whose driver changed (new race, new
-    // pick) or whose kart is no longer in the snapshot, so the chosen racer is what you see.
+    // A kart mesh is tied to its driver look: rebuild (and dispose) it when the driver for that
+    // kart id changed, so the chosen racer is what you see. A kart that is merely absent from
+    // the snapshot (menu showcase has only one kart) is hidden, not destroyed, so Race Again
+    // does not rebuild and leak a fresh set of geometry every time.
     const liveKarts = new Map(snapshot.karts.map((k) => [k.id, k.driverId]));
     for (const [id, m] of this.kartMeshes.entries()) {
-      if (liveKarts.get(id) !== m.driverId) {
-        m.root.parent?.remove(m.root);
+      const want = liveKarts.get(id);
+      if (want !== undefined && want !== m.driverId) {
+        this.kartsGroup.remove(m.root);
+        disposeTree(m.root);
         this.kartMeshes.delete(id);
+      } else {
+        m.root.visible = want !== undefined;
       }
     }
     for (const k of snapshot.karts) {

@@ -1176,7 +1176,7 @@ window.__game = {
     autoGas: state.autoGas,
     snapshot: state.lastSnapshot,
     paused: state.paused,
-    meshDrivers: Object.fromEntries([...renderer.kartMeshes].map(([id, m]) => [id, m.driverId])),
+    meshDrivers: Object.fromEntries([...renderer.kartMeshes].filter(([, m]) => m.root.visible).map(([id, m]) => [id, m.driverId])),
   }),
   startMode: (mode = '1p', trackId = 'island', driverId = 'rufus') => {
     state.selectedTrackId = trackId;
