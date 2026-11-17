@@ -45,6 +45,7 @@ export class OneEuroFilter {
   }
 }
 
+const WHEEL_MAX_DEG = 60;
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -283,13 +284,13 @@ export class MotionController {
         throttle: alive ? slot.lastThrottle : 0,
         brake: false,
         reverse: false,
-        steer: alive ? slot.lastSteer * 0.85 : 0,
+        steer: alive ? slot.lastSteer : 0,
         turbo: false,
         attack: false,
         hop: false,
         calibrated: slot.calibrated,
         visible: alive,
-        wheelAngleDeg: slot.wheelAngleDeg * 0.85,
+        wheelAngleDeg: alive ? slot.wheelAngleDeg : 0,
         poseLabel: alive ? 'HOLD' : 'NO PLAYER',
       };
     }
@@ -407,24 +408,27 @@ export class MotionController {
       rw.y > shMidY - sw * 0.45 && rw.y < shMidY + sw * 1.05;
 
     if (handsInWheelZone) {
-      wheelTiltRight = clamp((rw.y - lw.y) / (sw * 0.50), -1, 1);
+      // True hand-line angle (degrees, right hand lower = clockwise = right turn), mapped 1:1 to the wheel
+      // (+-60 deg). Coordinates are normalised to the frame, so the vertical difference is compared with the
+      // horizontal hand span; the span is floored so hands held close together cannot make the angle explode.
+      const spanX = Math.max(Math.abs(rw.x - lw.x), sw * 0.9);
+      wheelTiltRight = clamp((Math.atan2(rw.y - lw.y, spanX) * 180 / Math.PI) / WHEEL_MAX_DEG, -1, 1);
     }
 
     const rawSteer = attack
       ? 0
-      : clamp(bodyLeanRight + wheelTiltRight * 0.80, -1, 1);
+      : clamp(bodyLeanRight + wheelTiltRight, -1, 1);
 
     const deadzone = 0.10;
     const dzSteer = Math.abs(rawSteer) < deadzone
       ? 0
       : Math.sign(rawSteer) * ((Math.abs(rawSteer) - deadzone) / (1 - deadzone));
-    const curvedSteer = dzSteer === 0
-      ? 0
-      : Math.sign(dzSteer) * Math.pow(Math.abs(dzSteer), 1.5);
+    // 1:1 (linear) after the dead zone: the steering wheel angle is exactly what the player's hands show.
+    const curvedSteer = dzSteer;
 
     const filteredSteer = slot.steerFilter.filter(curvedSteer, tSec);
     const steer = Math.abs(filteredSteer) < 0.01 ? 0 : clamp(filteredSteer, -1, 1);
-    slot.wheelAngleDeg = Math.round(steer * 55);
+    slot.wheelAngleDeg = Math.round(steer * WHEEL_MAX_DEG);
 
     // Gently adapt neutralShoulderY when standing upright (like body-runner line 331)
     if (!jumped && !crouched) {

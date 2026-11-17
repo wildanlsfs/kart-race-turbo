@@ -7,7 +7,7 @@ import { RaceSimulation, TRACKS, DRIVERS, DIFFICULTIES, DEFAULT_DIFFICULTY, norm
 import { RaceRenderer } from './renderer.js';
 import { SoundFX } from './audio.js';
 import { LanClient } from './net.js';
-import { SteerPad } from './touchsteer.js';
+import { WheelTouch, stepKeyWheel, WHEEL_LIMIT_DEG } from './touchsteer.js';
 import { AdaptiveScale } from './perf.js';
 
 const ITEM_LABELS = {
@@ -90,37 +90,42 @@ for (const btn of document.querySelectorAll('[data-touch]')) {
   btn.addEventListener('lostpointercapture', end);
 }
 
-// Steering pad: horizontal finger position = steer amount (proportional, smoothed in SteerPad).
-const steerPad = new SteerPad();
+// Touch steering wheel: drag around the wheel centre; the wheel angle (+-60 deg) is the input position and it
+// springs back to centre on release. Pointer capture keeps a finger that slides off the wheel steering.
+const wheelTouch = new WheelTouch();
 const steerPadEl = document.getElementById('steer-pad');
-const steerThumbEl = document.getElementById('steer-thumb');
+const steerArtEl = document.getElementById('steer-wheel-art');
+const steerReadoutEl = document.getElementById('steer-readout');
+const wheelCenter = () => { const r = steerPadEl.getBoundingClientRect(); return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
 if (steerPadEl) {
   steerPadEl.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    const r = steerPadEl.getBoundingClientRect();
-    if (steerPad.press(e.pointerId, e.clientX, { left: r.left, width: r.width })) {
+    if (wheelTouch.press(e.pointerId, e.clientX, e.clientY, wheelCenter())) {
       try { steerPadEl.setPointerCapture(e.pointerId); } catch (_) {}
       steerPadEl.classList.add('pressed');
     }
   });
-  steerPadEl.addEventListener('pointermove', (e) => { steerPad.move(e.pointerId, e.clientX); });
-  const padEnd = (e) => { e.preventDefault(); if (steerPad.release(e.pointerId)) steerPadEl.classList.remove('pressed'); };
+  steerPadEl.addEventListener('pointermove', (e) => { wheelTouch.move(e.pointerId, e.clientX, e.clientY); });
+  const padEnd = (e) => { e.preventDefault(); if (wheelTouch.release(e.pointerId)) steerPadEl.classList.remove('pressed'); };
   steerPadEl.addEventListener('pointerup', padEnd);
   steerPadEl.addEventListener('pointercancel', padEnd);
   steerPadEl.addEventListener('lostpointercapture', padEnd);
 }
 function clearTouchInput() {
-  touchHeld.clear(); touchPointers.clear(); steerPad.clear();
+  touchHeld.clear(); touchPointers.clear(); wheelTouch.clear();
   if (steerPadEl) steerPadEl.classList.remove('pressed');
   for (const b of document.querySelectorAll('[data-touch]')) b.classList.remove('pressed');
 }
+// returns the touch wheel angle in degrees (+-60)
 function updateTouchSteer(dt) {
-  const v = steerPad.update(dt);
-  if (steerThumbEl) {
-    const half = steerPadEl.getBoundingClientRect().width / 2 || 1;
-    steerThumbEl.style.transform = `translateX(${(steerPad.active ? (steerPad.markerFraction - 0.5) * 2 : v) * (half - 40)}px)`;
-  }
-  return v;
+  const deg = wheelTouch.update(dt);
+  if (steerArtEl) steerArtEl.style.transform = `rotate(${deg}deg)`;
+  if (steerReadoutEl) steerReadoutEl.textContent = `${Math.round(deg)}\u00b0`;
+  return deg;
+}
+function setHudWheel(prefix, steer) {
+  const el = document.getElementById(`${prefix}-wheel`);
+  if (el) el.style.transform = `rotate(${(steer * WHEEL_LIMIT_DEG).toFixed(1)}deg)`;
 }
 
 // No long-press menu, text selection, image drag or pinch-zoom on the game surface.
@@ -1087,7 +1092,7 @@ document.getElementById('btn-lan-leave').addEventListener('click', () => {
 // Combine Webcam Motion Input + Keyboard/Touch Input
 let touchSteerValue = 0;
 let frameDt = 1 / 60;
-const kbSteerSmooth = [0, 0]; // keyboard steering ramps in and out instead of snapping to full lock
+const kbWheelDeg = [0, 0]; // keyboard wheel angle per player (degrees)
 function buildCombinedInput(playerIdx, motionInput) {
   const isP1 = playerIdx === 0;
   const kbForward = isP1
@@ -1109,18 +1114,13 @@ function buildCombinedInput(playerIdx, motionInput) {
     ? (keys.has('KeyF') || keys.has('KeyE') || touchHeld.has('attack'))
     : (keys.has('Enter') || keys.has('KeyK'));
 
-  const kbRaw = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
-  {
-    const v = kbSteerSmooth[playerIdx] || 0;
-    const rate = kbRaw !== 0 ? 9 : 16;
-    const nv = v + (kbRaw - v) * Math.min(1, rate * frameDt);
-    kbSteerSmooth[playerIdx] = kbRaw === 0 && Math.abs(nv) < 0.03 ? 0 : nv;
-  }
-  const kbSteer = kbSteerSmooth[playerIdx];
-  const padSteer = isP1 && state.mode !== '2p' ? touchSteerValue : 0;
+  const kbDir = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
+  kbWheelDeg[playerIdx] = stepKeyWheel(kbWheelDeg[playerIdx] || 0, kbDir, frameDt);
+  const kbSteer = kbWheelDeg[playerIdx] / WHEEL_LIMIT_DEG;
+  const padSteer = isP1 && state.mode !== '2p' ? touchSteerValue / WHEEL_LIMIT_DEG : 0;
   const useMotion = motionInput && motionInput.visible;
 
-  const steer = Math.abs(kbSteer) > 0.001 ? kbSteer : (Math.abs(padSteer) > 0.02 ? padSteer : (useMotion ? motionInput.steer : 0));
+  const steer = Math.abs(kbSteer) > 0.001 ? kbSteer : (Math.abs(padSteer) > 0.001 || wheelTouch.active ? padSteer : (useMotion ? motionInput.steer : 0));
   const brake = kbBrake || Boolean(useMotion && motionInput.brake);
   const reverse = kbBrake || Boolean(useMotion && motionInput.reverse);
   const throttle = brake ? 0 : ((kbForward || state.autoGas || (useMotion && motionInput.throttle > 0)) ? 1 : 0);
@@ -1243,6 +1243,7 @@ function updateHudCard(prefix, kart, totalLaps, poseLabel) {
   document.getElementById(`${prefix}-turbo-pct`).textContent = `${kart.turboCharge}%`;
   document.getElementById(`${prefix}-turbo-fill`).style.width = `${kart.turboCharge}%`;
   document.getElementById(`${prefix}-pose-pill`).textContent = poseLabel || 'DRIVE';
+  setHudWheel(prefix, kart.steerAngle || 0);
 }
 
 function showFinishModal(snapshot) {
@@ -1325,6 +1326,7 @@ function animate(nowMs) {
   drawPipOverlay(motionInputs);
 
   touchSteerValue = state.screen === 'racing' && !state.paused ? updateTouchSteer(dt) : 0;
+  if (state.screen !== 'racing') { kbWheelDeg[0] = 0; kbWheelDeg[1] = 0; }
   if (state.screen === 'racing') {
     const p1In = buildCombinedInput(0, motionInputs[0]);
     const p2In = buildCombinedInput(1, motionInputs[1]);
@@ -1426,6 +1428,7 @@ window.__game = {
     laps: state.laps,
     wizard: { step: wiz.step, pick: wiz.pick },
     lanPlayerId: state.lanPlayerId,
+    wheel: { touchDeg: wheelTouch.deg, kb: [...kbWheelDeg], hudRot: [0, 1].map((i) => (document.getElementById(`p${i + 1}-wheel`) || {}).style?.transform || '') },
     autoGas: state.autoGas,
     snapshot: state.lastSnapshot,
     paused: state.paused,

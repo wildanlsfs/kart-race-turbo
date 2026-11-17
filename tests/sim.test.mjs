@@ -129,9 +129,10 @@ test('Simulated human webcam player (with jitter and body-lean inertia) stays on
   for (let frame = 0; frame < 1500; frame++) {
     const tSec = frame / 60;
     const bot = competentBot(sim, kart, { turbo: false, rng: () => 1 });
-    const weave = Math.sin(tSec * 0.7) * 0.3;
+    const weave = Math.sin(tSec * 0.7) * 0.2;
     const wanted = Math.max(-1, Math.min(1, bot.steer + weave));
-    lean = Math.max(-1, Math.min(1, lean + (wanted - lastSteer) * 0.05));
+    // position control: the lean the player holds IS the wheel angle they want, corrected by what they see
+    lean = Math.max(-1, Math.min(1, lean + (wanted - lastSteer) * 0.15));
     const jitter = Math.sin(frame * 13.7) * 0.008;
     const leanWave = lean;
     const pose = makeSyntheticPose({

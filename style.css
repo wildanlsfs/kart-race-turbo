@@ -1240,3 +1240,11 @@ body.touch.cam-on .minimap-card { top: 204px; }
   .wz-title { font-size: 1.25rem; } .wz-card small, .wz-track .wz-mech { display: none; }
   .wz-track canvas { max-width: 120px; } .wz-detail { display: none; }
 }
+
+/* Virtual steering wheel (touch) and HUD wheel icon */
+.steer-wheel { position: relative; pointer-events: auto; flex: 0 0 auto; width: clamp(150px, 27vh, 250px); height: clamp(150px, 27vh, 250px); touch-action: none; border-radius: 50%; }
+.steer-wheel .wheel-art { width: 100%; height: 100%; filter: drop-shadow(0 5px 6px rgba(42,26,58,.45)); transition: none; }
+.steer-wheel.pressed .wheel-art circle:first-child { stroke: #ffd23f; }
+.wheel-readout { position: absolute; left: 0; right: 0; bottom: -2px; text-align: center; font-weight: 800; color: #fff; text-shadow: 0 2px 0 rgba(42,26,58,.7); font-size: .95rem; pointer-events: none; }
+.hud-wheel { width: 38px; height: 38px; flex: 0 0 auto; filter: drop-shadow(0 2px 0 rgba(42,26,58,.35)); }
+body[data-mode="2p"] .hud-wheel { width: 32px; height: 32px; }

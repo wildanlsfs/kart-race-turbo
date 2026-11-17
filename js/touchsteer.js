@@ -59,3 +59,60 @@ export class SteerPad {
   // 0..1 offset of the finger across the pad, for drawing the thumb marker
   get markerFraction() { return this.active ? clamp((this.x - this.rect.left) / this.rect.width, 0, 1) : 0.5; }
 }
+
+// ===== Virtual steering wheel (position control, +-60 deg) =====
+export const WHEEL_LIMIT_DEG = 60;
+export const WHEEL_RETURN_DEG_S = 320; // spring-back speed after release
+export const KEY_TURN_DEG_S = 200; // keyboard: wheel turn speed towards +-60
+export const KEY_RETURN_DEG_S = 320; // keyboard: return to centre on release
+
+export const clampWheel = (deg) => clamp(deg, -WHEEL_LIMIT_DEG, WHEEL_LIMIT_DEG);
+const wrapDeg = (d) => { while (d > 180) d -= 360; while (d < -180) d += 360; return d; };
+
+// Angle of a point around the wheel centre in degrees, 0 = straight up, clockwise positive (right turn).
+export function pointerAngleDeg(x, y, cx, cy) {
+  return (Math.atan2(x - cx, -(y - cy)) * 180) / Math.PI;
+}
+
+// Move `value` towards `target` by at most rate*dt (no overshoot).
+export function approach(value, target, rate, dt) {
+  const d = target - value;
+  const step = rate * dt;
+  return Math.abs(d) <= step ? target : value + Math.sign(d) * step;
+}
+
+// Keyboard wheel: held direction turns the wheel at KEY_TURN_DEG_S up to the limit, release returns to centre.
+export function stepKeyWheel(deg, dir, dt) {
+  if (dir !== 0) return clampWheel(approach(deg, dir * WHEEL_LIMIT_DEG, KEY_TURN_DEG_S, dt));
+  return approach(deg, 0, KEY_RETURN_DEG_S, dt);
+}
+
+// One finger drags the wheel around its centre: the wheel turns by the angle the finger sweeps (grab point stays
+// under the finger), clamped to +-60 deg. A finger that goes on turning past the limit keeps the wheel at the limit;
+// coming back unwinds it. Lift = the wheel springs back to centre. Pointer capture is handled by the caller.
+export class WheelTouch {
+  constructor() { this.pointerId = null; this.deg = 0; this.grabAngle = 0; this.grabDeg = 0; this.c = { cx: 0, cy: 0 }; this.lastAngle = 0; this.accum = 0; }
+  press(id, x, y, c) {
+    if (this.pointerId !== null) return false;
+    this.pointerId = id; this.c = c;
+    this.lastAngle = pointerAngleDeg(x, y, c.cx, c.cy);
+    this.accum = this.deg; // continuous (unwrapped) wheel angle before clamping
+    return true;
+  }
+  move(id, x, y) {
+    if (id !== this.pointerId) return;
+    const a = pointerAngleDeg(x, y, this.c.cx, this.c.cy);
+    const d = wrapDeg(a - this.lastAngle);
+    this.lastAngle = a;
+    this.accum = clamp(this.accum + d, -WHEEL_LIMIT_DEG - 90, WHEEL_LIMIT_DEG + 90); // allow a little over-travel for unwinding
+    this.deg = clampWheel(this.accum);
+  }
+  release(id) { if (id === this.pointerId) { this.pointerId = null; return true; } return false; }
+  clear() { this.pointerId = null; this.deg = 0; this.accum = 0; }
+  get active() { return this.pointerId !== null; }
+  update(dt) {
+    if (!this.active) this.deg = approach(this.deg, 0, WHEEL_RETURN_DEG_S, dt);
+    else this.deg = clampWheel(this.deg);
+    return this.deg;
+  }
+}

@@ -253,6 +253,7 @@ function makeGrassTexture(baseHex, accentHex, style = 'meadow') {
   }, [32, 32]);
 }
 
+const TIRE_MAX_RAD = (28 * Math.PI) / 180;
 export class RaceRenderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -1135,8 +1136,8 @@ export class RaceRenderer {
       m.driverGroup.rotation.x = k.turboActive ? -0.18 : 0;
 
       // Front wheel steer (spin dropped: tyres are bodies of revolution)
-      m.wheels[0].rotation.y = -k.steerAngle * 0.45;
-      m.wheels[1].rotation.y = -k.steerAngle * 0.45;
+      m.wheels[0].rotation.y = -k.steerAngle * TIRE_MAX_RAD; // front tyres: 28 deg at full 60 deg wheel lock (same as the sim)
+      m.wheels[1].rotation.y = -k.steerAngle * TIRE_MAX_RAD;
 
       // Arm animations: Punch forward, Hands-Up Turbo celebration, or Gripping Steering Wheel
       if (k.punching) {

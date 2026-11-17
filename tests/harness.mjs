@@ -1,5 +1,5 @@
 // Shared helpers for deterministic balance / fairness runs (used by tests and tools/balance.mjs).
-import { RaceSimulation, TRACKS, DRIVERS, mulberry32 } from '../js/sim.js';
+import { RaceSimulation, TRACKS, DRIVERS, mulberry32, steerForYaw } from '../js/sim.js';
 
 export { TRACKS, DRIVERS, mulberry32, RaceSimulation };
 
@@ -35,7 +35,8 @@ export function competentBot(sim, k, { rng = Math.random, turbo = true, lane = 0
   const tx = tp.x + tp.rx * lane;
   const tz = tp.z + tp.rz * lane;
   const diff = wrap(Math.atan2(tx - k.x, tz - k.z) - k.heading);
-  const steer = clamp(-diff * 2.2, -1, 1);
+  // A human looks ahead and turns the wheel to the angle that gives the yaw rate needed (position control).
+  const steer = steerForYaw(k, -diff * 2.2);
   let brake = false;
   if (lift) {
     const a = sim.track.getPointAt(k.trackS);

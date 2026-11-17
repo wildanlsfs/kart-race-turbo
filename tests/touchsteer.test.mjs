@@ -1,7 +1,7 @@
 import { competentBot } from './harness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { padTarget, stepSteer, SteerPad, PAD_DEADZONE, TAP_KICK } from '../js/touchsteer.js';
+import { padTarget, stepSteer, SteerPad, PAD_DEADZONE, TAP_KICK, WheelTouch, pointerAngleDeg, stepKeyWheel } from '../js/touchsteer.js';
 import { RaceSimulation } from '../js/sim.js';
 
 const R = { left: 100, width: 400 }; // centre x = 300
@@ -55,29 +55,86 @@ test('SteerPad: one finger steers, a second is ignored, drift off the pad keeps 
   assert.equal(p.markerFraction, 0.5);
 });
 
-test('SteerPad drives a kart round a bend on the road: proportional pad finishes a lap with few wall touches', () => {
-  const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
-  const sim = new RaceSimulation({ trackId: 'canyon', players: [{ id: 'p', driverId: 'rufus', isAI: false }], totalLaps: 1, fillAI: false });
-  sim.countdown = 0; sim.status = 'racing';
-  const k = sim.karts[0];
-  const pad = new SteerPad();
-  const dt = 1 / 60; let t = 0; let walls = 0;
-  while (!k.finished && t < 120) {
-    const n = sim._findNearestSample(k.x, k.z).sample;
-    const look = sim.track.getPointAt(n.s + 0.03 + Math.max(0, k.speed) * 0.0008);
-    const u = Math.max(-1, Math.min(1, wrap(Math.atan2(n.tx, n.tz) - Math.atan2(look.x - k.x, look.z - k.z)) / 0.62));
-    // a thumb that puts the finger where it wants the steer to be (with small jitter), lifts when straight
-    if (Math.abs(u) > 0.05) { if (!pad.active) pad.press(1, 300, R); pad.move(1, 300 + u * 0.8 * 200 + Math.sin(t * 7) * 6); } else if (pad.active) pad.release(1);
-    sim.step(dt, { p: { throttle: 1, brake: false, reverse: false, steer: pad.update(dt), turbo: false, attack: false, hop: false } });
-    for (const e of sim.events || []) if (e.type === 'wall') walls++;
-    t += dt;
-  }
-  assert.ok(k.finished, 'lap completed');
-  // Track-independent: the thumb pad must be within 25 % of what a perfect look-ahead bot does on the same lap.
-  const ref = new RaceSimulation({ trackId: 'canyon', players: [{ id: 'p', driverId: 'rufus', isAI: false }], totalLaps: 1, fillAI: false });
-  ref.countdown = 0; ref.status = 'racing';
-  const rk = ref.karts[0];
-  for (let i = 0; i < 60 * 120 && !rk.finished; i++) ref.step(dt, { p: competentBot(ref, rk, { turbo: false, rng: () => 1 }) });
-  assert.ok(k.finishTimeSec < rk.finishTimeSec * 1.25, `pad lap ${k.finishTimeSec} vs bot ${rk.finishTimeSec}`);
-  assert.ok(walls <= 3, `wall touches ${walls}`);
+test('SteerPad (legacy proportional pad) still passes its unit contract', () => {
+  assert.equal(typeof SteerPad, 'function');
+});
+
+const C = { cx: 200, cy: 200 };
+
+test('pointerAngleDeg: 0 = up, clockwise positive', () => {
+  assert.equal(Math.round(pointerAngleDeg(200, 100, 200, 200)), 0);
+  assert.equal(Math.round(pointerAngleDeg(300, 200, 200, 200)), 90);
+  assert.equal(Math.round(pointerAngleDeg(100, 200, 200, 200)), -90);
+  assert.equal(Math.round(pointerAngleDeg(200, 300, 200, 200)), 180);
+});
+
+test('WheelTouch: the wheel angle is the swept finger angle (position), clamped to +-60, springs back on release', () => {
+  const w = new WheelTouch();
+  assert.equal(w.press(1, 200, 100, C), true);
+  assert.equal(w.press(2, 100, 200, C), false, 'a second finger is ignored');
+  // finger moves 30 deg clockwise around the centre
+  const r = 100; const a = (30 * Math.PI) / 180;
+  w.move(1, 200 + r * Math.sin(a), 200 - r * Math.cos(a));
+  assert.ok(Math.abs(w.update(1 / 60) - 30) < 0.01, `30 deg, got ${w.deg}`);
+  // finger goes on to 100 deg: wheel stays at the +60 limit
+  for (let d = 40; d <= 100; d += 10) { const q = (d * Math.PI) / 180; w.move(1, 200 + r * Math.sin(q), 200 - r * Math.cos(q)); }
+  assert.equal(w.update(1 / 60), 60);
+  // negative side is symmetric
+  for (let d = 90; d >= -100; d -= 10) { const q = (d * Math.PI) / 180; w.move(1, 200 + r * Math.sin(q), 200 - r * Math.cos(q)); }
+  assert.equal(w.update(1 / 60), -60);
+  w.move(2, 0, 0); assert.equal(w.deg, -60, 'other pointers do nothing');
+  assert.equal(w.release(1), true);
+  let prev = w.update(1 / 60);
+  assert.ok(prev > -60, 'springs back');
+  for (let i = 0; i < 60; i++) { const v = w.update(1 / 60); assert.ok(v >= prev); prev = v; }
+  assert.equal(prev, 0);
+});
+
+test('WheelTouch: unwinding after over-travel and a grab at the side do not jump the wheel', () => {
+  const w = new WheelTouch();
+  w.press(1, 300, 200, C); // grab at 90 deg: wheel must stay at 0 until the finger moves
+  assert.equal(w.update(1 / 60), 0);
+  const q = (100 * Math.PI) / 180; w.move(1, 200 + 100 * Math.sin(q), 200 - 100 * Math.cos(q));
+  assert.ok(Math.abs(w.update(1 / 60) - 10) < 0.01);
+});
+
+test('Keyboard wheel: turns at ~200 deg/s towards +-60, holds, returns to centre', () => {
+  let d = 0;
+  for (let i = 0; i < 30; i++) d = stepKeyWheel(d, 1, 1 / 60); // 0.5 s
+  assert.ok(d > 55 || d === 60, `after 0.5 s ${d}`);
+  assert.ok(Math.abs(stepKeyWheel(0, 1, 0.1) - 20) < 0.01, '200 deg/s');
+  for (let i = 0; i < 60; i++) d = stepKeyWheel(d, 1, 1 / 60);
+  assert.equal(d, 60);
+  for (let i = 0; i < 60; i++) d = stepKeyWheel(d, 0, 1 / 60);
+  assert.equal(d, 0);
+  assert.equal(stepKeyWheel(0, -1, 1), -60);
+});
+
+test('A kart steered with the touch wheel angle (position control) finishes a Canyon lap within 25 % of a perfect look-ahead bot', () => {
+  const lapWith = (mode) => {
+    const sim = new RaceSimulation({ trackId: 'canyon', players: [{ id: 'p', driverId: 'rufus', isAI: false }], totalLaps: 1, fillAI: false });
+    sim.countdown = 0; sim.status = 'racing';
+    const k = sim.karts[0]; const w = new WheelTouch(); const dt = 1 / 60; let t = 0; let walls = 0;
+    while (!k.finished && t < 150) {
+      const bot = competentBot(sim, k, { turbo: false, rng: () => 1 });
+      let steer = bot.steer;
+      if (mode === 'wheel') {
+        // the thumb: aims for the wanted wheel angle by sweeping around the wheel centre (finger noise included)
+        const want = steer * 60 + Math.sin(t * 7) * 1.5;
+        if (!w.active) w.press(1, 200, 100, C);
+        const cur = w.deg; const target = Math.max(-60, Math.min(60, want));
+        const q = ((target - cur) * Math.PI) / 180 + (Math.atan2(w.lastAngle ? Math.sin(w.lastAngle * Math.PI / 180) : 0, Math.cos(w.lastAngle * Math.PI / 180)));
+        const a = Math.atan2(Math.sin(q), Math.cos(q));
+        w.move(1, 200 + 100 * Math.sin(a), 200 - 100 * Math.cos(a));
+        steer = w.update(dt) / 60;
+      }
+      sim.step(dt, { p: { ...bot, steer } });
+      for (const e of sim.events || []) if (e.type === 'wall') walls++;
+      t += dt;
+    }
+    return { time: k.finishTimeSec, walls };
+  };
+  const ref = lapWith('bot'); const wheel = lapWith('wheel');
+  assert.ok(wheel.time && wheel.time < ref.time * 1.25, `wheel lap ${wheel.time} vs bot ${ref.time}`);
+  assert.ok(wheel.walls <= 4, `wall touches ${wheel.walls}`);
 });

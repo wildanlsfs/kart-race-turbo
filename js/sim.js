@@ -39,6 +39,21 @@ export function mulberry32(seed) {
 const SPIN_TIME = 0.9;
 const GRIP_REF = 4.0; // handling value of the balanced driver
 const CORNER_DRAG = 0.014; // speed scrubbed per unit of lateral acceleration (balanced driver)
+// Steering model: the input is a wheel POSITION (steer = wheel angle / 60 deg, so +-1 = +-60 deg). The front tyres
+// turn by TIRE_MAX at full wheel lock and the yaw rate follows a bicycle model (yaw = v / wheelbase * tan(tyre)),
+// limited by grip (lateral acceleration <= GRIP_LAT x handling stat). Asking for more than the grip gives
+// understeer: the kart turns less than asked and scrubs speed. Zero wheel = straight.
+export const WHEEL_MAX_DEG = 60;
+export const TIRE_MAX = (28 * Math.PI) / 180;
+export const WHEELBASE = 2.4;
+const GRIP_LAT = 16;
+const UNDERSTEER_SCRUB = 0.9;
+// Steer value (-1..1) that yields a wanted yaw rate (rad/s, positive = heading decreasing = turning right) at the kart's speed.
+export function steerForYaw(kart, yawWanted) {
+  const v = Math.max(3, Math.abs(kart.speed));
+  const tire = Math.atan((yawWanted * WHEELBASE) / v);
+  return clamp(tire / TIRE_MAX, -1, 1);
+}
 const BARRIER_SCRUB = 1.6; // speed fraction lost per radian the soft barrier has to turn a kart
 const OFFROAD_SPEED = 0.55; // top-speed factor beyond the kerb (grass / sand)
 const CLOSE_AFTER = 60; // seconds the race stays open after the first kart finishes
@@ -127,6 +142,7 @@ export class RaceSimulation {
         driftCharge: 0,
         finished: false,
         finishTimeSec: null,
+        wheelDeg: 0,
         aiTargetOffset: (driver.ai ? driver.ai.lane : 0) * 2.2,
         aiPace: 1,
         aiSkill: driver.ai ? driver.ai.skill : 1,
@@ -209,7 +225,7 @@ export class RaceSimulation {
     const desiredHeading = Math.atan2(tx - kart.x, tz - kart.z);
     const diff = wrapAngle(desiredHeading - kart.heading);
     // Slow lane wander (per-kart phase, deterministic from the rng) so karts do not all take one line.
-    let steer = clamp(-diff * 2.2, -1, 1);
+    let steer = steerForYaw(kart, -diff * 2.4);
     if (this.diff.mistakeRate > 0) {
       if (kart.aiMistakeT > 0) {
         kart.aiMistakeT -= dt;
@@ -426,12 +442,9 @@ export class RaceSimulation {
         const headBefore = kart.heading;
         const steerInput = clamp(rawInput.steer || 0, -1, 1);
         kart.steerAngle = steerInput;
-        const speedFactor = Math.min(1, Math.abs(kart.speed) / 8 + 0.25);
-        const reverseFlip = kart.speed < -0.5 ? -1 : 1;
         const s = nearest.sample;
         const trackHeading = Math.atan2(s.tx, s.tz);
         const lateralOffset = (kart.x - s.x) * s.rx + (kart.z - s.z) * s.rz;
-        const turnRate = kart.driver.stats.handling * 0.56 * (Math.abs(steerInput) > 0.6 ? 1.1 : 1.0);
         let steerEff = steerInput;
         const softMargin = halfRoad - 1.4;
         const excess = Math.abs(lateralOffset) - softMargin;
@@ -439,10 +452,17 @@ export class RaceSimulation {
           // steering toward the barrier is progressively damped
           steerEff *= clamp(1 - excess / 1.6, 0, 1);
         }
-        // Steering is real turning for everybody (humans and AI): the input sets how fast the nose
-        // turns. With no input the kart keeps its heading. The only help is the soft barrier below,
-        // which acts in the last metre or two before the kerb and costs speed every time it engages.
-        kart.heading = wrapAngle(kart.heading - steerEff * turnRate * speedFactor * reverseFlip * dt);
+        kart.wheelDeg = steerInput * WHEEL_MAX_DEG;
+        // Bicycle model. Positive steer = right = heading decreases.
+        const tire = steerEff * TIRE_MAX;
+        const yawDemand = (kart.speed / WHEELBASE) * Math.tan(tire);
+        const gripLimit = (kart.driver.stats.handling * GRIP_LAT) / Math.max(4, Math.abs(kart.speed));
+        const yaw = clamp(yawDemand, -gripLimit, gripLimit);
+        if (Math.abs(yawDemand) > gripLimit) {
+          const over = 1 - gripLimit / Math.abs(yawDemand);
+          kart.speed -= kart.speed * over * UNDERSTEER_SCRUB * dt;
+        }
+        kart.heading = wrapAngle(kart.heading - yaw * dt);
 
         if (kart.speed > 1) {
           // Soft barrier: near the kerb the nose may only point away from the road centre by an angle
