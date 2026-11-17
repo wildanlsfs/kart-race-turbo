@@ -410,7 +410,8 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (!items.length) return;
     const dir = e.code === 'ArrowLeft' || e.code === 'ArrowUp' ? -1 : 1;
-    const next = items[cur < 0 ? 0 : (cur + dir + items.length) % items.length];
+    const base = cur >= 0 ? cur : Math.max(0, items.findIndex((el) => el.classList.contains('selected')));
+    const next = items[(base + dir + items.length) % items.length];
     next.focus({ preventScroll: true });
     if (next.classList.contains('wz-racer') || next.classList.contains('wz-track')) next.click();
     return;
