@@ -7,6 +7,7 @@ import { RaceSimulation, TRACKS, DRIVERS, getTrackById } from './sim.js';
 import { RaceRenderer } from './renderer.js';
 import { SoundFX } from './audio.js';
 import { LanClient } from './net.js';
+import { SteerPad } from './touchsteer.js';
 
 const ITEM_LABELS = {
   rocket: '🚀 ROCKET',
@@ -59,14 +60,72 @@ window.addEventListener('keyup', (e) => {
   keys.delete(e.code);
 });
 
+// Action buttons (brake / turbo / punch). Each press is captured by its pointer, so a finger that
+// slides off the button keeps holding it; we only release on pointerup / pointercancel / lost capture.
+const touchPointers = new Map(); // pointerId -> action
+function releaseTouchPointer(id) {
+  const action = touchPointers.get(id);
+  if (!action) return;
+  touchPointers.delete(id);
+  if (![...touchPointers.values()].includes(action)) touchHeld.delete(action);
+  for (const btn of document.querySelectorAll(`[data-touch="${action}"]`)) btn.classList.toggle('pressed', touchHeld.has(action));
+}
 for (const btn of document.querySelectorAll('[data-touch]')) {
   const action = btn.getAttribute('data-touch');
-  const start = (e) => { e.preventDefault(); touchHeld.add(action); };
-  const end = (e) => { e.preventDefault(); touchHeld.delete(action); };
-  btn.addEventListener('pointerdown', start);
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+    touchPointers.set(e.pointerId, action);
+    touchHeld.add(action);
+    btn.classList.add('pressed');
+  });
+  const end = (e) => { e.preventDefault(); releaseTouchPointer(e.pointerId); };
   btn.addEventListener('pointerup', end);
   btn.addEventListener('pointercancel', end);
-  btn.addEventListener('pointerleave', end);
+  btn.addEventListener('lostpointercapture', end);
+}
+
+// Steering pad: horizontal finger position = steer amount (proportional, smoothed in SteerPad).
+const steerPad = new SteerPad();
+const steerPadEl = document.getElementById('steer-pad');
+const steerThumbEl = document.getElementById('steer-thumb');
+if (steerPadEl) {
+  steerPadEl.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const r = steerPadEl.getBoundingClientRect();
+    if (steerPad.press(e.pointerId, e.clientX, { left: r.left, width: r.width })) {
+      try { steerPadEl.setPointerCapture(e.pointerId); } catch (_) {}
+      steerPadEl.classList.add('pressed');
+    }
+  });
+  steerPadEl.addEventListener('pointermove', (e) => { steerPad.move(e.pointerId, e.clientX); });
+  const padEnd = (e) => { e.preventDefault(); if (steerPad.release(e.pointerId)) steerPadEl.classList.remove('pressed'); };
+  steerPadEl.addEventListener('pointerup', padEnd);
+  steerPadEl.addEventListener('pointercancel', padEnd);
+  steerPadEl.addEventListener('lostpointercapture', padEnd);
+}
+function clearTouchInput() {
+  touchHeld.clear(); touchPointers.clear(); steerPad.clear();
+  if (steerPadEl) steerPadEl.classList.remove('pressed');
+  for (const b of document.querySelectorAll('[data-touch]')) b.classList.remove('pressed');
+}
+function updateTouchSteer(dt) {
+  const v = steerPad.update(dt);
+  if (steerThumbEl) {
+    const half = steerPadEl.getBoundingClientRect().width / 2 || 1;
+    steerThumbEl.style.transform = `translateX(${(steerPad.active ? (steerPad.markerFraction - 0.5) * 2 : v) * (half - 40)}px)`;
+  }
+  return v;
+}
+
+// No long-press menu, text selection, image drag or pinch-zoom on the game surface.
+for (const type of ['contextmenu', 'dragstart', 'selectstart', 'gesturestart', 'gesturechange']) {
+  window.addEventListener(type, (e) => {
+    if (!document.body.classList.contains('touch')) return;
+    const t = e.target;
+    if (t && t.closest && t.closest('input, textarea, select')) return;
+    e.preventDefault();
+  }, { passive: false });
 }
 
 // Menu Preview Simulation (updates live when user clicks a circuit or driver!)
@@ -220,7 +279,7 @@ const pauseModalEl = document.getElementById('pause-modal');
 function setPaused(v) {
   state.paused = Boolean(v) && state.screen === 'racing' && state.mode !== 'lan' && Boolean(state.sim);
   pauseModalEl.classList.toggle('hidden', !state.paused);
-  if (state.paused) { touchHeld.clear(); keys.clear(); }
+  if (state.paused) { clearTouchInput(); keys.clear(); }
 }
 function leaveToMenu() {
   if (state.mode === 'lan') lanClient.leaveRoom();
@@ -241,7 +300,7 @@ window.addEventListener('keydown', (e) => {
     if (state.screen === 'racing' && state.mode !== 'lan') setPaused(!state.paused);
   }
 });
-window.addEventListener('blur', () => { keys.clear(); touchHeld.clear(); if (state.screen === 'racing' && state.mode !== 'lan') setPaused(true); });
+window.addEventListener('blur', () => { keys.clear(); clearTouchInput(); if (state.screen === 'racing' && state.mode !== 'lan') setPaused(true); });
 
 // Webcam & Pose Worker Setup (with Main-Thread fallback matching jagoan-kotak/js/main.js)
 const videoEl = document.getElementById('webcam-video');
@@ -651,6 +710,7 @@ function startLocalRace(mode) {
   state.paused = false;
   pauseModalEl.classList.add('hidden');
   setScreen('racing');
+  if (document.body.classList.contains('touch') && innerHeight > innerWidth && mode !== '2p') showBanner('Turn the tablet sideways for a wider view', 'info', 3000);
 }
 
 document.getElementById('btn-mode-1p').addEventListener('click', () => {
@@ -807,6 +867,7 @@ document.getElementById('btn-lan-leave').addEventListener('click', () => {
 });
 
 // Combine Webcam Motion Input + Keyboard/Touch Input
+let touchSteerValue = 0;
 function buildCombinedInput(playerIdx, motionInput) {
   const isP1 = playerIdx === 0;
   const kbForward = isP1
@@ -816,10 +877,10 @@ function buildCombinedInput(playerIdx, motionInput) {
     ? (keys.has('KeyS') || (state.mode !== '2p' && keys.has('ArrowDown')) || touchHeld.has('brake'))
     : keys.has('ArrowDown');
   const kbLeft = isP1
-    ? (keys.has('KeyA') || (state.mode !== '2p' && keys.has('ArrowLeft')) || touchHeld.has('left'))
+    ? (keys.has('KeyA') || (state.mode !== '2p' && keys.has('ArrowLeft')))
     : keys.has('ArrowLeft');
   const kbRight = isP1
-    ? (keys.has('KeyD') || (state.mode !== '2p' && keys.has('ArrowRight')) || touchHeld.has('right'))
+    ? (keys.has('KeyD') || (state.mode !== '2p' && keys.has('ArrowRight')))
     : keys.has('ArrowRight');
   const kbTurbo = isP1
     ? (keys.has('Space') || touchHeld.has('turbo'))
@@ -829,9 +890,10 @@ function buildCombinedInput(playerIdx, motionInput) {
     : (keys.has('Enter') || keys.has('KeyK'));
 
   const kbSteer = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
+  const padSteer = isP1 && state.mode !== '2p' ? touchSteerValue : 0;
   const useMotion = motionInput && motionInput.visible;
 
-  const steer = kbSteer !== 0 ? kbSteer : (useMotion ? motionInput.steer : 0);
+  const steer = kbSteer !== 0 ? kbSteer : (Math.abs(padSteer) > 0.02 ? padSteer : (useMotion ? motionInput.steer : 0));
   const brake = kbBrake || Boolean(useMotion && motionInput.brake);
   const reverse = kbBrake || Boolean(useMotion && motionInput.reverse);
   const throttle = brake ? 0 : ((kbForward || state.autoGas || (useMotion && motionInput.throttle > 0)) ? 1 : 0);
@@ -843,8 +905,8 @@ function buildCombinedInput(playerIdx, motionInput) {
   if (kbAttack) poseLabel = 'PUNCH! 💥';
   else if (kbTurbo) poseLabel = 'TURBO! 🚀';
   else if (kbBrake) poseLabel = 'BRAKE 🛑';
-  else if (kbLeft) poseLabel = 'LEFT ⬅️';
-  else if (kbRight) poseLabel = 'RIGHT ➡️';
+  else if (kbLeft || padSteer < -0.3) poseLabel = 'LEFT ⬅️';
+  else if (kbRight || padSteer > 0.3) poseLabel = 'RIGHT ➡️';
 
   return { throttle, brake, reverse, steer, turbo, attack, hop, poseLabel };
 }
@@ -1027,6 +1089,7 @@ function animate(nowMs) {
   syncCameraUi();
   drawPipOverlay(motionInputs);
 
+  touchSteerValue = state.screen === 'racing' && !state.paused ? updateTouchSteer(dt) : 0;
   if (state.screen === 'racing') {
     const p1In = buildCombinedInput(0, motionInputs[0]);
     const p2In = buildCombinedInput(1, motionInputs[1]);

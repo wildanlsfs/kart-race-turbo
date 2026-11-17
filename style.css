@@ -1073,3 +1073,53 @@ body[data-mode="2p"] #hud-p2 { position: fixed; left: calc(50% + 14px); top: 12p
 .driver-detail .stat u { display: block; height: 100%; background: var(--orange); border-radius: 5px; }
 .driver-detail small { flex-basis: 100%; font-size: 0.66rem; }
 @media (max-height: 460px) { .driver-detail small { display: none; } .driver-detail { margin-top: 3px; } }
+
+/* ===== Touch pass: big proportional steering pad, large action buttons, no browser gestures ===== */
+body.touch .touch-controls,
+body.touch .touch-controls * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+body.touch .touch-controls img, body.touch #game-canvas { -webkit-user-drag: none; user-drag: none; }
+.touch-controls { left: 12px; right: 12px; bottom: 12px; align-items: flex-end; justify-content: space-between; gap: 14px; }
+.steer-pad {
+  position: relative;
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: clamp(230px, 40vw, 440px);
+  height: clamp(110px, 28vh, 260px);
+  border-radius: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.85);
+  background: linear-gradient(90deg, rgba(60, 40, 110, 0.22), rgba(255, 255, 255, 0.08) 50%, rgba(60, 40, 110, 0.22));
+  box-shadow: 0 5px 0 rgba(42, 26, 58, 0.25), 0 8px 18px -6px rgba(42, 26, 58, 0.45);
+  transition: background 0.08s, border-color 0.08s;
+}
+.steer-pad.pressed { border-color: #ffd23f; background: linear-gradient(90deg, rgba(255, 210, 63, 0.38), rgba(255, 255, 255, 0.16) 50%, rgba(255, 210, 63, 0.38)); }
+.steer-hint {
+  position: absolute; bottom: 10px; font-weight: 800; font-size: clamp(0.9rem, 2.4vw, 1.5rem);
+  color: #fff; text-shadow: 0 2px 0 rgba(42, 26, 58, 0.55); letter-spacing: 0.04em; pointer-events: none;
+}
+.steer-hint-l { left: 16px; } .steer-hint-r { right: 16px; }
+.steer-mid { position: absolute; left: 50%; top: 14%; bottom: 14%; width: 3px; margin-left: -1.5px; border-radius: 2px; background: rgba(255, 255, 255, 0.45); pointer-events: none; }
+.steer-thumb {
+  position: absolute; top: 50%; left: 50%; width: clamp(46px, 7vw, 76px); height: clamp(46px, 7vw, 76px);
+  margin: calc(clamp(46px, 7vw, 76px) / -2) 0 0 calc(clamp(46px, 7vw, 76px) / -2);
+  border-radius: 50%; background: rgba(255, 255, 255, 0.55); border: 3px solid #fff; pointer-events: none;
+  box-shadow: 0 3px 10px rgba(42, 26, 58, 0.35);
+}
+.steer-pad.pressed .steer-thumb { background: #ffd23f; border-color: #fff8d6; }
+.touch-actions { gap: 10px; align-items: flex-end; }
+.touch-actions .touch-btn {
+  min-width: clamp(84px, 12vw, 150px); min-height: clamp(64px, 17vh, 130px); font-size: clamp(0.95rem, 2.2vw, 1.4rem); border-radius: 22px;
+}
+.touch-actions .touch-btn.accent-brake { min-width: clamp(64px, 9vw, 110px); background: #ffe3a3; color: #5a3b00; }
+.touch-actions .touch-btn.pressed { transform: translateY(4px); box-shadow: 0 1px 0 var(--card-lip); filter: brightness(1.08); outline: 4px solid #ffd23f; }
+@media (max-height: 480px) {
+  .touch-controls { left: 10px; right: 10px; bottom: 8px; }
+  .touch-actions .touch-btn { min-width: 76px; min-height: 58px; font-size: 0.82rem; padding: 4px 8px; }
+  .touch-actions .touch-btn.accent-brake { min-width: 58px; }
+}
+.rotate-hint { position: fixed; left: 50%; top: 16%; transform: translateX(-50%); z-index: 30; pointer-events: none; padding: 8px 18px; border-radius: 999px; background: rgba(42,26,58,0.85); color: #fff; font-weight: 700; }

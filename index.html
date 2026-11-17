@@ -105,12 +105,14 @@
 
     <!-- Touch / Quick Action Buttons -->
     <div id="touch-controls" class="touch-controls">
-      <div class="touch-pad">
-        <button type="button" class="touch-btn" data-touch="left">◀</button>
-        <button type="button" class="touch-btn" data-touch="brake">🛑</button>
-        <button type="button" class="touch-btn" data-touch="right">▶</button>
+      <div id="steer-pad" class="steer-pad" aria-label="Steering pad: slide left or right">
+        <span class="steer-hint steer-hint-l">◀ LEFT</span>
+        <span class="steer-hint steer-hint-r">RIGHT ▶</span>
+        <span class="steer-mid"></span>
+        <span id="steer-thumb" class="steer-thumb"></span>
       </div>
-      <div class="touch-pad">
+      <div class="touch-pad touch-actions">
+        <button type="button" class="touch-btn accent-brake" data-touch="brake">🛑 BRAKE</button>
         <button type="button" class="touch-btn accent-turbo" data-touch="turbo">🚀 TURBO</button>
         <button type="button" class="touch-btn accent-attack" data-touch="attack">💥 PUNCH</button>
       </div>
