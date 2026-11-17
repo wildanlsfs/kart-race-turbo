@@ -14,15 +14,43 @@ function wrapAngle(a) {
   return a;
 }
 
+// Difficulty: only the AI changes (top-speed scale, how often it uses items, how often it slips up).
+export const DIFFICULTIES = {
+  santai: { id: 'santai', name: 'Santai', topScale: 0.93, itemUse: 0.45, itemDelay: 1.8, mistakeRate: 0.12 },
+  normal: { id: 'normal', name: 'Normal', topScale: 0.99, itemUse: 0.8, itemDelay: 1.0, mistakeRate: 0.03 },
+  pro: { id: 'pro', name: 'Pro', topScale: 1.04, itemUse: 1.0, itemDelay: 0.5, mistakeRate: 0.006 },
+};
+export const DEFAULT_DIFFICULTY = 'normal';
+export function normalizeDifficulty(d) {
+  return Object.prototype.hasOwnProperty.call(DIFFICULTIES, d) ? d : DEFAULT_DIFFICULTY;
+}
+
+// Small deterministic PRNG (mulberry32) for tests and balance runs; the browser uses Math.random.
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 const SPIN_TIME = 0.9;
 const GRIP_REF = 4.0; // handling value of the balanced driver
 const CORNER_DRAG = 0.014; // speed scrubbed per unit of lateral acceleration (balanced driver)
+const BARRIER_SCRUB = 1.6; // speed fraction lost per radian the soft barrier has to turn a kart
+const OFFROAD_SPEED = 0.55; // top-speed factor beyond the kerb (grass / sand)
 const CLOSE_AFTER = 60; // seconds the race stays open after the first kart finishes
 const STUCK_WINDOW = 3.0; // seconds without progress before the safety net resets a kart
 const STUCK_MIN_PROGRESS = 0.008; // lap fraction (about 4 m) that counts as moving
 
 export class RaceSimulation {
-  constructor({ trackId = 'island', mode = '1p', players = [], totalLaps = 3, fillAI = true } = {}) {
+  constructor({ trackId = 'island', mode = '1p', players = [], totalLaps = 3, fillAI = true, difficulty = DEFAULT_DIFFICULTY, rng = Math.random } = {}) {
+    this.rng = rng;
+    this.idSeq = 0;
+    this.difficulty = normalizeDifficulty(difficulty);
+    this.diff = DIFFICULTIES[this.difficulty];
     this.track = getTrackById(trackId);
     this.mode = mode;
     this.totalLaps = totalLaps;
@@ -99,10 +127,15 @@ export class RaceSimulation {
         driftCharge: 0,
         finished: false,
         finishTimeSec: null,
-        aiTargetOffset: (idx - 1.5) * 1.4,
+        aiTargetOffset: (driver.ai ? driver.ai.lane : 0) * 2.2,
         aiPace: 1,
-        aiSkill: 0.97 + ((idx * 7) % 4) * 0.01,
+        aiSkill: driver.ai ? driver.ai.skill : 1,
         aiItemTimer: 0,
+        aiNoUse: false,
+        aiMistakeT: 0,
+        aiMistakeDir: 0,
+        aiWander: this.rng() * Math.PI * 2,
+        steerCmd: 0,
         invulnTimer: 0,
         wallCooldown: 0,
         resets: 0,
@@ -155,28 +188,36 @@ export class RaceSimulation {
     return Math.abs(wrapAngle(Math.atan2(b.tx, b.tz) - Math.atan2(a.tx, a.tz)));
   }
 
-  // Rubber-band: AI slows a little when far ahead of the lead human and pushes when far behind.
+  // AI pace comes from the difficulty and the driver's fixed personality only. The one exception is a
+  // small catch-up for AI karts that are far behind the leader; nobody is ever slowed down for being ahead
+  // and nothing depends on where a human is.
   _updateAIPace(kart) {
-    const humans = this.karts.filter((k) => !k.isAI && !k.finished);
-    if (humans.length === 0) {
-      kart.aiPace = kart.aiSkill;
-      return;
-    }
-    const lead = Math.max(...humans.map((h) => h.totalProgress));
-    const gap = kart.totalProgress - lead; // laps; positive = AI ahead
-    kart.aiPace = clamp((1 - gap * 1.4) * kart.aiSkill, 0.9, 1.05);
+    const lead = Math.max(...this.karts.map((k) => k.totalProgress));
+    const gap = lead - kart.totalProgress; // laps behind the leader
+    const catchUp = clamp((gap - 0.12) * 0.25, 0, 0.03);
+    kart.aiPace = this.diff.topScale * kart.aiSkill + catchUp;
   }
 
   _computeAIInput(kart, dt) {
     const halfRoad = this.track.roadWidth * 0.5;
     const look = 0.028 + Math.max(0, kart.speed) * 0.0011;
     const targetPt = this.track.getPointAt(kart.trackS + look);
-    const off = clamp(kart.aiTargetOffset, -(halfRoad - 3.2), halfRoad - 3.2);
+    const off = clamp(kart.aiTargetOffset + Math.sin(this.elapsedSec * 0.35 + kart.aiWander) * 1.2, -(halfRoad - 3.2), halfRoad - 3.2);
     const tx = targetPt.x + targetPt.rx * off;
     const tz = targetPt.z + targetPt.rz * off;
     const desiredHeading = Math.atan2(tx - kart.x, tz - kart.z);
     const diff = wrapAngle(desiredHeading - kart.heading);
-    const steer = clamp(-diff * 2.2, -1, 1);
+    // Slow lane wander (per-kart phase, deterministic from the rng) so karts do not all take one line.
+    let steer = clamp(-diff * 2.2, -1, 1);
+    if (this.diff.mistakeRate > 0) {
+      if (kart.aiMistakeT > 0) {
+        kart.aiMistakeT -= dt;
+        steer = clamp(steer + kart.aiMistakeDir * 0.75, -1, 1);
+      } else if (this.rng() < this.diff.mistakeRate * dt && kart.speed > 12) {
+        kart.aiMistakeT = 0.5 + this.rng() * 0.5;
+        kart.aiMistakeDir = this.rng() < 0.5 ? -1 : 1;
+      }
+    }
 
     // Lift off before tight bends so AI karts stay on the road instead of scraping walls.
     const bend = this._roadBend(kart.trackS);
@@ -190,7 +231,7 @@ export class RaceSimulation {
     let attack = false;
     if (kart.heldItem) {
       kart.aiItemTimer -= dt;
-      if (kart.aiItemTimer <= 0) {
+      if (kart.aiItemTimer <= 0 && !kart.aiNoUse) {
         const fwdX = Math.sin(kart.heading);
         const fwdZ = Math.cos(kart.heading);
         let ahead = null;
@@ -217,12 +258,12 @@ export class RaceSimulation {
 
   _chooseItemForRank(rank) {
     if (rank === 1) {
-      return Math.random() < 0.55 ? 'tnt' : (Math.random() < 0.5 ? 'shield' : 'bomb');
+      return this.rng() < 0.55 ? 'tnt' : (this.rng() < 0.5 ? 'shield' : 'bomb');
     }
     if (rank === 2) {
-      return ITEMS[Math.floor(Math.random() * ITEMS.length)];
+      return ITEMS[Math.floor(this.rng() * ITEMS.length)];
     }
-    return Math.random() < 0.6 ? 'rocket' : (Math.random() < 0.5 ? 'shield' : 'bomb');
+    return this.rng() < 0.6 ? 'rocket' : (this.rng() < 0.5 ? 'shield' : 'bomb');
   }
 
   _fireItem(kart) {
@@ -243,7 +284,7 @@ export class RaceSimulation {
 
     if (item === 'tnt') {
       this.hazards.push({
-        id: `tnt_${Date.now()}_${Math.random()}`,
+        id: `tnt_${this.idSeq++}`,
         ownerId: kart.id,
         type: 'tnt',
         x: kart.x - fwdX * 2.6,
@@ -256,7 +297,7 @@ export class RaceSimulation {
 
     // Rocket or Bowling Bomb projectile
     this.projectiles.push({
-      id: `proj_${Date.now()}_${Math.random()}`,
+      id: `proj_${this.idSeq++}`,
       ownerId: kart.id,
       type: item, // 'rocket' | 'bomb'
       x: kart.x + fwdX * 2.5,
@@ -351,7 +392,7 @@ export class RaceSimulation {
 
         const mangoBonus = Math.min(10, kart.mango) * 0.25;
         const boostBonus = (kart.turboActiveTimer > 0 ? kart.driver.stats.boostBonus : 0) + (kart.padBoostTimer > 0 ? 11 : 0);
-        const effectiveTopSpeed = (kart.baseTopSpeed + mangoBonus + boostBonus) * (offRoad && kart.turboActiveTimer <= 0 ? 0.72 : 1.0);
+        const effectiveTopSpeed = (kart.baseTopSpeed + mangoBonus + boostBonus) * (offRoad && kart.turboActiveTimer <= 0 ? OFFROAD_SPEED : 1.0);
 
         const topScale = kart.finished ? 0.7 : (kart.isAI ? kart.aiPace : 1);
         const topSpeed = effectiveTopSpeed * topScale;
@@ -392,29 +433,25 @@ export class RaceSimulation {
           // steering toward the barrier is progressively damped
           steerEff *= clamp(1 - excess / 1.6, 0, 1);
         }
-        const isHuman = !kart.isAI && !kart.finished;
-        if (isHuman && kart.speed >= -0.2 && !rawInput.reverse) {
-          // Road-assisted steering for body/phone control: the input picks how far the nose points
-          // left/right of the road direction (so a wobbly lean cannot spin the kart), and the
-          // kart tracks that heading quickly. Turning is therefore proportional, never twitchy.
-          const pull = clamp(lateralOffset / halfRoad, -1, 1) * 0.3; // gentle pull back toward the racing line
-          const desired = wrapAngle(trackHeading - steerEff * 0.62 + pull);
-          const alignRate = (Math.abs(steerEff) > 0.05 ? kart.driver.stats.handling * 1.55 : 5.2) * speedFactor;
-          kart.heading = wrapAngle(kart.heading + wrapAngle(desired - kart.heading) * Math.min(1, alignRate * dt));
-        } else {
-          kart.heading = wrapAngle(kart.heading - steerEff * turnRate * speedFactor * reverseFlip * dt);
-        }
+        // Steering is real turning for everybody (humans and AI): the input sets how fast the nose
+        // turns. With no input the kart keeps its heading. The only help is the soft barrier below,
+        // which acts in the last metre or two before the kerb and costs speed every time it engages.
+        kart.heading = wrapAngle(kart.heading - steerEff * turnRate * speedFactor * reverseFlip * dt);
 
         if (kart.speed > 1) {
-          // Soft barrier: the nose may point away from the road centre only by an angle that
-          // shrinks to zero at the kerb, so karts slide along the edge instead of leaving the road.
+          // Soft barrier: near the kerb the nose may only point away from the road centre by an angle
+          // that shrinks to zero at the kerb. The rescue is paid for with speed, so riding the edge or
+          // leaning on it is slow, and a kart nobody steers does not get driven round the track by it.
           const err = wrapAngle(trackHeading - kart.heading);
           const latSign = Math.sign(lateralOffset) || 1;
           const outAngle = latSign * err;
-          const allowed = 0.9 * clamp((halfRoad + 0.2 - Math.abs(lateralOffset)) / 4.5, 0, 1);
+          const allowed = 0.9 * clamp((halfRoad + 0.2 - Math.abs(lateralOffset)) / 1.8, 0, 1);
           if (outAngle > allowed) {
             const fixed = trackHeading - latSign * allowed;
+            const before = kart.heading;
             kart.heading = wrapAngle(kart.heading + wrapAngle(fixed - kart.heading) * Math.min(1, 12 * dt));
+            const turned = Math.abs(wrapAngle(kart.heading - before));
+            kart.speed = Math.max(0, kart.speed * (1 - Math.min(0.6, turned * BARRIER_SCRUB)));
           }
         }
 
@@ -452,6 +489,9 @@ export class RaceSimulation {
       // Barrier at the outer edge: slide along it, scrub some speed (once per contact), never teleport far.
       const nearestAfter = this._findNearestSample(kart.x, kart.z);
       const maxDist = this.track.roadWidth * 0.5 + 3.5;
+      if (nearestAfter.dist > maxDist - 0.4 && kart.speed > 0) {
+        kart.speed *= Math.max(0, 1 - 5 * dt); // leaning on the wall keeps scrubbing speed
+      }
       if (nearestAfter.dist > maxDist) {
         const s = nearestAfter.sample;
         const dx = kart.x - s.x;
@@ -461,9 +501,9 @@ export class RaceSimulation {
         kart.z = s.z + (dz / len) * maxDist;
         const tangent = Math.atan2(s.tx, s.tz);
         const err = wrapAngle(tangent - kart.heading);
-        kart.heading = wrapAngle(kart.heading + err * 0.35);
+        kart.heading = wrapAngle(kart.heading + err * 0.12);
         if (kart.wallCooldown <= 0) {
-          kart.speed *= 0.82;
+          kart.speed *= 0.6;
           kart.wallCooldown = 0.35;
           this.events.push({ type: 'wall', kartId: kart.id, x: kart.x, z: kart.z });
         }
@@ -525,7 +565,8 @@ export class RaceSimulation {
           kart.turboCharge = Math.min(100, kart.turboCharge + 8);
           if (!kart.heldItem) {
             kart.heldItem = this._chooseItemForRank(kart.rank);
-            kart.aiItemTimer = 1.2 + Math.random() * 1.5;
+            kart.aiItemTimer = (1.2 + this.rng() * 1.5) * this.diff.itemDelay;
+            kart.aiNoUse = kart.isAI && this.rng() > this.diff.itemUse;
           }
           this.events.push({ type: 'crate_smash', kartId: kart.id, item: kart.heldItem, x: crate.x, z: crate.z });
         }

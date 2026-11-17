@@ -69,9 +69,9 @@ export class LanClient {
     });
   }
 
-  async createRoom({ name, driverId, trackId }) {
+  async createRoom({ name, driverId, trackId, difficulty, laps }) {
     await this.connect();
-    this.send({ type: 'create_room', name, driverId, trackId });
+    this.send({ type: 'create_room', name, driverId, trackId, difficulty, laps });
   }
 
   async joinRoom({ code, name, driverId }) {
@@ -81,6 +81,14 @@ export class LanClient {
 
   selectTrack(trackId) {
     this.send({ type: 'select_track', trackId });
+  }
+
+  setOptions({ difficulty, laps } = {}) {
+    this.send({ type: 'set_options', difficulty, laps });
+  }
+
+  selectDriver(driverId) {
+    this.send({ type: 'select_driver', driverId });
   }
 
   startRace(fillAI = true) {

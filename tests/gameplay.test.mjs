@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TRACKS, DRIVERS, RaceSimulation } from '../js/sim.js';
+import { competentBot } from './harness.mjs';
 
 const IDLE = { throttle: 1, brake: false, reverse: false, steer: 0, turbo: false, attack: false, hop: false };
 const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
@@ -18,13 +19,9 @@ function withSeed(seed, fn) {
   try { return fn(); } finally { Math.random = orig; }
 }
 
-// Road-following bot for a human kart (human steering picks an angle off the road direction)
+// Competent human bot (true steering towards a look-ahead point on the centre line; see tests/harness.mjs)
 function humanBot(sim, k, useTurbo = true) {
-  const n = sim._findNearestSample(k.x, k.z).sample;
-  const look = sim.track.getPointAt(n.s + 0.03 + Math.max(0, k.speed) * 0.0008);
-  const des = Math.atan2(look.x - k.x, look.z - k.z);
-  const th = Math.atan2(n.tx, n.tz);
-  return { ...IDLE, steer: Math.max(-1, Math.min(1, wrap(th - des) / 0.62)), turbo: useTurbo && k.turboCharge > 60, attack: k.heldItem && Math.random() < 0.02 };
+  return competentBot(sim, k, { turbo: useTurbo, rng: Math.random });
 }
 
 function soloLapTime(trackId, driverId, laps = 3) {

@@ -10,6 +10,7 @@ export const DRIVERS = [
     kartColor: '#f97316',
     accent: '#facc15',
     headgear: 'ears', // Pointed fox ears (faceless)
+    ai: { skill: 1.0, lane: -0.4 },
     stats: { topSpeed: 29, accel: 26, handling: 4.0, boostBonus: 12 },
   },
   {
@@ -21,6 +22,7 @@ export const DRIVERS = [
     kartColor: '#10b981',
     accent: '#a3e635',
     headgear: 'helmet', // Aero racing helmet (faceless)
+    ai: { skill: 1.0, lane: 0.3 },
     stats: { topSpeed: 30.5, accel: 20, handling: 3.7, boostBonus: 12.5 },
   },
   {
@@ -32,6 +34,7 @@ export const DRIVERS = [
     kartColor: '#f59e0b',
     accent: '#ef4444',
     headgear: 'crown', // Wooden tiki feathers (faceless)
+    ai: { skill: 1.0, lane: 0.5 },
     stats: { topSpeed: 28.8, accel: 26, handling: 4.7, boostBonus: 12 },
   },
   {
@@ -43,6 +46,7 @@ export const DRIVERS = [
     kartColor: '#8b5cf6',
     accent: '#38bdf8',
     headgear: 'visor', // Tech dome visor (faceless)
+    ai: { skill: 1.0, lane: -0.2 },
     stats: { topSpeed: 28.5, accel: 36, handling: 4.0, boostBonus: 12 },
   },
 ];

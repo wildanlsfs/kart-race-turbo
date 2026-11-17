@@ -152,9 +152,10 @@ function makeChevronTexture() {
     for (let i = 0; i < 2; i++) {
       const y = 22 + i * 56;
       g.beginPath();
-      g.moveTo(22, y + 36);
-      g.lineTo(64, y);
-      g.lineTo(106, y + 36);
+      // Apex at the bottom of the canvas = toward +z on the pad's top face = driving direction.
+      g.moveTo(22, y);
+      g.lineTo(64, y + 36);
+      g.lineTo(106, y);
       g.stroke();
     }
   });
@@ -543,6 +544,9 @@ export class RaceRenderer {
     for (const r of track.ramps) {
       const m = part(rampGeo, '#ffd166', { outline: 0.05 });
       m.position.set(r.x, 0.32, r.z);
+      // YXZ: heading first, then tilt about the ramp's own X axis (default XYZ tilts about world X,
+      // so the slope pointed the wrong way / sideways on most headings). Front (+z) rises.
+      m.rotation.order = 'YXZ';
       m.rotation.y = Math.atan2(r.tx, r.tz);
       m.rotation.x = -0.22;
       scenery.collect(m);

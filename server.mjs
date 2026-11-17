@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { RaceSimulation, DRIVERS } from './js/sim.js';
+import { RaceSimulation, DRIVERS, TRACKS, normalizeDifficulty } from './js/sim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -157,6 +157,8 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
   const serializeRoom = (room) => ({
     code: room.code,
     trackId: room.trackId,
+    difficulty: room.difficulty,
+    laps: room.laps,
     status: room.status,
     hostId: room.hostId,
     players: room.players.map((p) => ({
@@ -202,6 +204,7 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
         activeRooms.push({
           code: room.code,
           trackId: room.trackId,
+          difficulty: room.difficulty,
           hostName: room.players[0]?.name || 'Host',
           playerCount: room.players.filter((p) => p.connected).length,
           status: room.status,
@@ -292,7 +295,9 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
           const driverId = DRIVERS.some((d) => d.id === msg.driverId) ? msg.driverId : 'rufus';
           const room = {
             code,
-            trackId: msg.trackId || 'island',
+            trackId: TRACKS.some((t) => t.id === msg.trackId) ? msg.trackId : 'island',
+            difficulty: normalizeDifficulty(msg.difficulty),
+            laps: [1, 3, 5].includes(Number(msg.laps)) ? Number(msg.laps) : 3,
             status: 'lobby',
             hostId: clientId,
             players: [{
@@ -344,7 +349,28 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
         }
 
         if (msg.type === 'select_track' && currentRoom && currentRoom.hostId === clientId) {
-          currentRoom.trackId = msg.trackId || currentRoom.trackId;
+          if (TRACKS.some((t) => t.id === msg.trackId)) currentRoom.trackId = msg.trackId;
+          broadcastRoom(currentRoom, { type: 'room_state', room: serializeRoom(currentRoom) });
+          return;
+        }
+
+        // Host settings: difficulty (Santai / Normal / Pro) and laps (1 / 3 / 5). Unknown values are ignored.
+        if (msg.type === 'set_options' && currentRoom && currentRoom.hostId === clientId && currentRoom.status !== 'racing') {
+          if (msg.difficulty !== undefined) currentRoom.difficulty = normalizeDifficulty(msg.difficulty);
+          if ([1, 3, 5].includes(Number(msg.laps))) currentRoom.laps = Number(msg.laps);
+          broadcastRoom(currentRoom, { type: 'room_state', room: serializeRoom(currentRoom) });
+          return;
+        }
+
+        // Each player picks their own racer in the lobby; a racer already taken by someone else is refused.
+        if (msg.type === 'select_driver' && currentRoom && currentRoom.status !== 'racing') {
+          const me = currentRoom.players.find((p) => p.id === clientId);
+          if (!me || !DRIVERS.some((d) => d.id === msg.driverId)) return;
+          if (currentRoom.players.some((p) => p.id !== clientId && p.connected && p.driverId === msg.driverId)) {
+            client.send({ type: 'error', message: 'That racer is already taken.' });
+            return;
+          }
+          me.driverId = msg.driverId;
           broadcastRoom(currentRoom, { type: 'room_state', room: serializeRoom(currentRoom) });
           return;
         }
@@ -360,7 +386,8 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
             trackId: currentRoom.trackId,
             mode: 'lan',
             players: activePlayers,
-            totalLaps: 3,
+            totalLaps: currentRoom.laps,
+            difficulty: currentRoom.difficulty,
             fillAI: msg.fillAI !== false,
           });
           currentRoom.status = 'racing';
@@ -432,6 +459,7 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
         activeRooms.push({
           code: room.code,
           trackId: room.trackId,
+          difficulty: room.difficulty,
           hostName: room.players[0]?.name || 'Host',
           playerCount: room.players.filter((p) => p.connected).length,
           status: room.status,

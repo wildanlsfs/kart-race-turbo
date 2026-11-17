@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TRACKS, DRIVERS, RaceSimulation } from '../js/sim.js';
 import { MotionController, makeSyntheticPose } from '../js/motion.js';
+import { competentBot } from './harness.mjs';
 
 test('Tracks provide closed loop splines, checkpoints, crates, and boost pads for 3 circuits', () => {
   assert.equal(TRACKS.length, 3);
@@ -120,11 +121,19 @@ test('Simulated human webcam player (with jitter and body-lean inertia) stays on
   let maxHeadingErr = 0;
   let maxDist = 0;
 
+  // The kart now turns only when the player steers (no auto road-following), so this player watches
+  // the road: the lean is a feedback loop that adds a slow weave to what a competent driver would
+  // steer, and the webcam mapping (filters, curve, dead zone) turns that lean into steering.
+  let lean = 0;
+  let lastSteer = 0;
   for (let frame = 0; frame < 1500; frame++) {
     const tSec = frame / 60;
-    // Simulate realistic human: slow sinusoidal leans left/right + deterministic camera jitter + turbo handsUp bursts
-    const leanWave = Math.sin(tSec * 0.7) * 0.75;
+    const bot = competentBot(sim, kart, { turbo: false, rng: () => 1 });
+    const weave = Math.sin(tSec * 0.7) * 0.3;
+    const wanted = Math.max(-1, Math.min(1, bot.steer + weave));
+    lean = Math.max(-1, Math.min(1, lean + (wanted - lastSteer) * 0.05));
     const jitter = Math.sin(frame * 13.7) * 0.008;
+    const leanWave = lean;
     const pose = makeSyntheticPose({
       centerX: 0.5 - leanWave * 0.06 + jitter,
       shoulderWidth: 0.2,
@@ -134,6 +143,7 @@ test('Simulated human webcam player (with jitter and body-lean inertia) stays on
       rightPunch: frame === 500,
     });
     const [p1In] = ctrl.update([pose], frame * (1000 / 60), 1);
+    lastSteer = p1In.steer;
     sim.step(1 / 60, { p1: p1In });
 
     const near = sim._findNearestSample(kart.x, kart.z);
