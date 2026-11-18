@@ -1328,3 +1328,40 @@ body[data-mode="2p"] .hud-wheel { width: 32px; height: 32px; }
 .wz-card.wz-off { background: #ece8df; filter: grayscale(0.7); cursor: not-allowed; }
 .wz-card.wz-off strong { opacity: 0.6; }
 .wz-card.wz-off small { font-weight: 700; color: #6b2a2a; opacity: 1; }
+
+/* Calibration framing stage: the preview scales to whatever room the screen leaves (4:3, never taller than 46 % of the viewport). */
+.calib-stage { display: grid; gap: 8px; margin-bottom: 10px; justify-items: center; }
+#calib-canvas {
+  display: none; width: min(100%, calc(46vh * 4 / 3), 560px); aspect-ratio: 4 / 3; height: auto;
+  border-radius: 16px; border: 3px solid #dcebff; background: #1b2a44;
+}
+body.cam-on #calib-canvas { display: block; }
+#calib-canvas.good { border-color: #3fbf6a; box-shadow: 0 0 0 3px rgba(63, 191, 106, 0.35); }
+.calib-tips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.calib-tips:empty { display: none; }
+.calib-tips li { background: #fff4d6; border: 2px solid #ffd166; color: #7a4a00; border-radius: 999px; padding: 3px 10px; font-size: 0.78rem; font-weight: 700; }
+.calib-tips li.good { background: #e3f8ea; border-color: #3fbf6a; color: #14602d; }
+@media (max-height: 560px) {
+  #calib-canvas { width: min(100%, calc(40vh * 4 / 3)); }
+  .calib-tips li { font-size: 0.7rem; padding: 2px 8px; }
+}
+@media (max-width: 420px) { .calib-tips li { font-size: 0.72rem; } }
+
+/* Calibration on landscape screens (laptops, tablets, phones on their side): preview on the left, status and buttons
+   on the right, so nothing is pushed below the fold whatever the height. Portrait keeps the single column. */
+@media (min-width: 640px) and (min-aspect-ratio: 5/4) {
+  #calib-modal > .cream-card {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); column-gap: 16px; align-items: start;
+    width: min(940px, 96vw); max-width: none; text-align: left;
+  }
+  #calib-modal > .cream-card > h2, #calib-modal > .cream-card > .card-lead { grid-column: 1 / -1; text-align: center; }
+  #calib-modal .calib-stage { grid-column: 1; grid-row: 3 / span 2; margin-bottom: 0; }
+  #calib-modal .calib-status-box { grid-column: 2; grid-row: 3; text-align: center; }
+  #calib-modal .modal-actions { grid-column: 2; grid-row: 4; }
+  #calib-canvas { width: min(100%, calc(56vh * 4 / 3), 560px); }
+}
+@media (min-width: 640px) and (min-aspect-ratio: 5/4) and (max-height: 520px) {
+  #calib-canvas { width: min(100%, calc(64vh * 4 / 3)); }
+  #calib-modal .calib-stage { gap: 4px; }
+}
+body[data-screen="calibrate"] .webcam-pip { visibility: hidden; pointer-events: none; }

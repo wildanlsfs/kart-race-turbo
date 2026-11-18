@@ -7,6 +7,7 @@ import { RaceSimulation, TRACKS, DRIVERS, DIFFICULTIES, DEFAULT_DIFFICULTY, norm
 import { RaceRenderer } from './renderer.js';
 import { SoundFX } from './audio.js';
 import { LanClient } from './net.js';
+import { checkAllFraming, guideFor } from './framing.js';
 import { WheelTouch, stepKeyWheel, WHEEL_LIMIT_DEG } from './touchsteer.js';
 import { AdaptiveScale } from './perf.js';
 
@@ -920,6 +921,65 @@ function stopCalibLoop() {
   }
 }
 
+// Framing stage: mirrored camera preview with the ideal-position frame (one silhouette, or two side by side for 2P),
+// live skeleton, and plain-language tips. Frame turns green when everybody needed is placed well.
+const calibCanvas = document.getElementById('calib-canvas');
+const calibCtx = calibCanvas.getContext('2d');
+const calibTipsEl = document.getElementById('calib-tips');
+const brightCanvas = document.createElement('canvas'); brightCanvas.width = 16; brightCanvas.height = 12;
+const brightCtx = brightCanvas.getContext('2d', { willReadFrequently: true });
+let brightness = null, brightAt = 0, framingResult = { ok: false, issues: [], perSlot: [] }, tipsKey = '';
+function sampleBrightness(nowMs) {
+  if (nowMs - brightAt < 500 || !state.webcamEnabled || videoEl.readyState < 2) return;
+  brightAt = nowMs;
+  try {
+    brightCtx.drawImage(videoEl, 0, 0, 16, 12);
+    const d = brightCtx.getImageData(0, 0, 16, 12).data; let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    brightness = sum / (d.length / 4);
+  } catch (_) { brightness = null; }
+}
+function drawCalibStage(nowMs) {
+  const n = state.mode === '2p' ? 2 : 1;
+  const poses = state.syntheticPoses || state.latestPoses || [];
+  sampleBrightness(nowMs);
+  framingResult = checkAllFraming(poses, n, brightness);
+  const w = calibCanvas.width, h = calibCanvas.height, c = calibCtx;
+  c.clearRect(0, 0, w, h);
+  if (state.webcamEnabled && videoEl.readyState >= 2) { c.save(); c.translate(w, 0); c.scale(-1, 1); c.drawImage(videoEl, 0, 0, w, h); c.restore(); }
+  else { c.fillStyle = '#1b2a44'; c.fillRect(0, 0, w, h); }
+  // darken outside the target boxes so the frame reads clearly
+  const slots = n === 2 ? [0, 1] : [0];
+  const okAll = framingResult.ok;
+  for (const sIdx of slots) {
+    const g = guideFor(n, sIdx), ok = framingResult.perSlot[sIdx] && framingResult.perSlot[sIdx].ok;
+    const col = ok ? '#3fbf6a' : (sIdx === 0 ? '#ffffff' : '#ffd166');
+    c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = Math.max(2, w * 0.005); c.setLineDash(ok ? [] : [10, 8]); c.globalAlpha = ok ? 0.95 : 0.8;
+    c.strokeRect(g.box.x0 * w, g.box.y0 * h, (g.box.x1 - g.box.x0) * w, (g.box.y1 - g.box.y0) * h);
+    c.beginPath(); c.arc(g.head.x * w, g.head.y * h, g.head.r * w, 0, Math.PI * 2); c.stroke();           // head
+    c.beginPath(); c.moveTo(g.leftShoulder.x * w, g.leftShoulder.y * h); c.lineTo(g.rightShoulder.x * w, g.rightShoulder.y * h); c.stroke(); // shoulders
+    for (const hand of [g.leftHand, g.rightHand]) { c.beginPath(); c.arc(hand.x * w, hand.y * h, g.sw * w * 0.16, 0, Math.PI * 2); c.stroke(); } // grip circles
+    c.setLineDash([]); c.font = `700 ${Math.round(w * 0.04)}px system-ui, sans-serif`; c.textAlign = 'center';
+    c.fillText(n === 2 ? `P${sIdx + 1}` : 'YOU', g.cx * w, (g.box.y0 - 0.012) * h + (g.box.y0 < 0.06 ? w * 0.05 : 0));
+    c.restore();
+  }
+  // live skeleton (shoulders + wrists), mirrored like the preview
+  for (const p of poses) {
+    const lm = p.landmarks || p; if (!lm || lm.length < 17) continue;
+    c.save(); c.fillStyle = '#ff7a3c'; c.strokeStyle = '#ff7a3c'; c.lineWidth = Math.max(2, w * 0.006);
+    c.beginPath(); c.moveTo((1 - lm[11].x) * w, lm[11].y * h); c.lineTo((1 - lm[12].x) * w, lm[12].y * h); c.stroke();
+    for (const i of [11, 12, 15, 16]) { if (!lm[i]) continue; c.beginPath(); c.arc((1 - lm[i].x) * w, Math.min(h, lm[i].y * h), w * 0.011, 0, Math.PI * 2); c.fill(); }
+    c.restore();
+  }
+  calibCanvas.classList.toggle('good', okAll);
+  const tips = okAll ? [{ text: n === 2 ? 'Both players are in position' : 'Perfect position', good: true }] : framingResult.issues;
+  const key = tips.map((t) => t.text).join('|') + (okAll ? '1' : '0');
+  if (key !== tipsKey) {
+    tipsKey = key;
+    calibTipsEl.replaceChildren(...tips.map((t) => { const li = document.createElement('li'); li.textContent = t.text; if (t.good) li.className = 'good'; return li; }));
+  }
+}
+
 function openCalibration(afterCb) {
   stopCalibLoop();
   pendingAfterCalib = afterCb;
@@ -946,6 +1006,7 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
   calibTimerEl.textContent = 'Look at Camera 👀';
 
   let waitedSec = 0;
+  let badFrameSec = 0;
   calibInterval = setInterval(() => {
     const poses = state.syntheticPoses || state.latestPoses;
     if (poses.length === 0) {
@@ -957,6 +1018,14 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
       return;
     }
 
+    // Hold the countdown until everyone needed is framed well (tips are on the preview). Never block for good:
+    // after 12 s of trying it goes ahead with what it sees, so a hard room cannot lock a player out.
+    if (!framingResult.ok && (badFrameSec += 0.2) < 12) {
+      heldSec = 0; lastBeepSec = 4;
+      calibTimerEl.textContent = 'Get into the frame';
+      calibHintEl.textContent = framingResult.issues[0] ? framingResult.issues[0].text : 'Match the frame on the preview.';
+      return;
+    }
     heldSec += 0.2;
     const rem = Math.max(0, Math.ceil(2.4 - heldSec));
     calibHintEl.textContent = 'Awesome, camera sees you! Hold your neutral center posture... 👍';
@@ -1431,6 +1500,7 @@ function animate(nowMs) {
     ? motionCtrl.update(activePoses, nowMs, playerCount)
     : [];
 
+  if (state.screen === 'calibrate') drawCalibStage(nowMs);
   if (isDebug && (state.webcamEnabled || state.syntheticPoses)) recordCamLog(nowMs, motionInputs);
   syncCameraUi();
   drawPipOverlay(motionInputs);
@@ -1587,6 +1657,13 @@ window.__game = {
   },
   clearSyntheticPose: () => {
     state.syntheticPoses = null;
+  },
+  // Debug only (?debug): open the calibration screen for mode '1p' or '2p', for framing/layout checks.
+  openCalibrationScreen: (mode = '1p') => {
+    if (!isDebug) return false;
+    state.mode = mode;
+    openCalibration(() => {});
+    return true;
   },
   setAutoGas: (v) => {
     state.autoGas = Boolean(v);
