@@ -334,7 +334,7 @@ function renderSummary() {
   const t = getTrackById(state.selectedTrackId);
   const dot = (d) => `<i class="swatch-dot" style="background:${d.color}"></i>`;
   const rows = [
-    ['Mode', state.mode === '2p' ? '2 Players, one screen' : 'Solo vs computer'],
+    ['Mode', state.mode === '2p' ? '2 Players, one screen' : (wiz.path === 'host' ? 'Wi-Fi room (you are the host)' : (wiz.path === 'join' ? 'Wi-Fi room (joining)' : 'Solo vs computer'))],
     [state.mode === '2p' ? 'Player 1' : 'Racer', `${dot(d1)}${d1.name}`],
   ];
   if (state.mode === '2p') rows.push(['Player 2', `${dot(d2)}${d2.name}`]);
@@ -378,11 +378,28 @@ function wizRender(step, pick) {
     document.getElementById('wz-start-sub').textContent = host ? 'Creates the room; friends join with the code' : (state.mode === '2p' ? 'Camera is optional - keyboard works for both' : 'Camera is optional');
     document.querySelector('#wz-start strong').textContent = host ? 'CREATE ROOM' : 'START!';
   }
+  if (step === 'multi') checkLanServer();
   if (step === 'join') refreshLanLobby();
   rebuildMenuPreview();
   setTimeout(() => focusStepDefault(), 30);
 }
 // Go to a step, remembering where we came from. Jumping to a step that is already in the history unwinds to it.
+// Wi-Fi needs the Node game server. On static hosting (GitHub Pages) it does not exist, so the option is switched
+// off with an explanation instead of failing later at "Create room".
+let lanServerAvailable = null;
+async function checkLanServer() {
+  try { lanServerAvailable = Boolean((await lanClient.fetchLanInfo()).available); } catch (_) { lanServerAvailable = false; }
+  const card = document.getElementById('wz-multi-lan');
+  if (!card) return;
+  const off = lanServerAvailable === false;
+  card.disabled = off;
+  card.classList.toggle('wz-off', off);
+  card.setAttribute('aria-disabled', off ? 'true' : 'false');
+  const small = card.querySelector('small');
+  if (small) small.textContent = off
+    ? 'Not available on this site: needs the game server on your own computer (npm run server)'
+    : 'Each player on their own device, same network';
+}
 function wizGo(step, pick = 1) {
   const all = [...wiz.stack, { step: wiz.step, pick: wiz.pick }];
   const idx = all.findLastIndex((e) => e.step === step && e.pick === pick);

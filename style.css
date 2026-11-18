@@ -1323,3 +1323,8 @@ body[data-mode="2p"] .hud-wheel { width: 32px; height: 32px; }
 .wz-join .lan-box { min-height: 0; }
 #menu-modal .wz-step[data-step="join"] { overflow-y: auto; max-height: 100%; }
 @media (max-height: 520px) { .wz-join .lan-rooms-list { max-height: 34vh; } }
+
+/* Wi-Fi option switched off when there is no game server (static hosting) */
+.wz-card.wz-off { background: #ece8df; filter: grayscale(0.7); cursor: not-allowed; }
+.wz-card.wz-off strong { opacity: 0.6; }
+.wz-card.wz-off small { font-weight: 700; color: #6b2a2a; opacity: 1; }

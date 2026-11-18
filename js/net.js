@@ -11,13 +11,17 @@ export class LanClient {
     this.connected = false;
   }
 
+  // `available` is true only when the game server answers: static hosting (GitHub Pages) has no WebSocket
+  // server, so the Wi-Fi mode cannot work there and the menu says so instead of failing at "Create room".
   async fetchLanInfo() {
     try {
       const res = await fetch('/api/lan-info', { cache: 'no-store' });
-      if (!res.ok) return { urls: [window.location.origin], rooms: [] };
-      return await res.json();
+      if (!res.ok) return { urls: [window.location.origin], rooms: [], available: false };
+      const info = await res.json();
+      if (!info || !Array.isArray(info.rooms)) return { urls: [window.location.origin], rooms: [], available: false };
+      return { ...info, available: true };
     } catch (_) {
-      return { urls: [window.location.origin], rooms: [] };
+      return { urls: [window.location.origin], rooms: [], available: false };
     }
   }
 
