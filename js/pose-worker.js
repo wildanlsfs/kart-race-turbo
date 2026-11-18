@@ -73,6 +73,14 @@ self.onmessage = async (e) => {
     return;
   }
 
+  if (d.type === 'config') {
+    // Solo / LAN only needs one person; 2P needs two. Detecting for fewer people is cheaper per frame.
+    if (landmarker && d.numPoses) {
+      try { landmarker.setOptions({ numPoses: d.numPoses }); } catch (_) {}
+    }
+    return;
+  }
+
   if (d.type === 'frame') {
     const bmp = d.bitmap;
     if (!landmarker) {
@@ -93,6 +101,7 @@ self.onmessage = async (e) => {
       landmarks: res ? plain(res.landmarks) : [],
       worldLandmarks: res ? plain(res.worldLandmarks) : [],
       poseMs: dt,
+      frameTs: d.ts, // echoed so the page can measure camera-to-result latency on its own clock
     });
   }
 };

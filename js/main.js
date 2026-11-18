@@ -36,6 +36,8 @@ const state = {
   latestPoses: [],
   syntheticPoses: null,
   poseMs: 0,
+  camFps: 0,
+  poseLatMs: 0,
   fps: 60,
   sim: null,
   lastSnapshot: null,
@@ -575,13 +577,14 @@ function initPoseWorker() {
       } else if (d.type === 'poses') {
         workerBusy = false;
         state.poseMs = d.poseMs || 0;
+        if (d.frameTs) state.poseLatMs = performance.now() - d.frameTs;
         state.latestPoses = (d.landmarks || []).map((lm, idx) => ({
           landmarks: lm,
           worldLandmarks: d.worldLandmarks ? d.worldLandmarks[idx] : null,
         }));
       }
     };
-    w.postMessage({ type: 'init', numPoses: 2 });
+    w.postMessage({ type: 'init', numPoses: state.mode === '2p' ? 2 : 1 });
   });
 }
 
@@ -604,6 +607,15 @@ async function initMainThreadLandmarker() {
   throw new Error('Main-thread PoseLandmarker failed');
 }
 
+// Detect one person unless a 2-player race needs two (cheaper per frame, measured ~30 % on GPU).
+function setPoseCount(n) {
+  if (poseWorker) poseWorker.postMessage({ type: 'config', numPoses: n });
+  else if (mainThreadLandmarker) { try { mainThreadLandmarker.setOptions({ numPoses: n }); } catch (_) {} }
+}
+
+let camFrames = 0;
+let camFpsT0 = 0;
+
 async function startWebcamAndWorker() {
   if (state.webcamEnabled && state.webcamReady) return true;
   if (cameraStartPromise) return cameraStartPromise;
@@ -612,7 +624,7 @@ async function startWebcamAndWorker() {
     try {
       pipStatusEl.textContent = '📷 Allow Camera...';
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, min: 15 }, facingMode: 'user' },
         audio: false,
       });
       videoEl.srcObject = stream;
@@ -636,6 +648,13 @@ async function startWebcamAndWorker() {
         if (!state.webcamEnabled) return;
         if (state.webcamReady && videoEl.readyState >= 2 && videoEl.currentTime !== lastVideoTime) {
           lastVideoTime = videoEl.currentTime;
+          camFrames += 1;
+          const nowT = performance.now();
+          if (nowT - camFpsT0 >= 1000) {
+            state.camFps = Math.round((camFrames * 1000) / (nowT - camFpsT0));
+            camFrames = 0;
+            camFpsT0 = nowT;
+          }
           if (poseWorker) {
             if (!workerBusy) {
               workerBusy = true;
@@ -918,6 +937,7 @@ document.getElementById('btn-recalibrate').addEventListener('click', async () =>
 // Start Local Race (1P or 2P Split-Screen)
 function startLocalRace(mode) {
   state.mode = mode;
+  setPoseCount(mode === '2p' ? 2 : 1);
   ensureP2();
   const p1Driver = state.selectedDriverId;
   const p2Driver = state.p2DriverId;
@@ -1376,7 +1396,7 @@ function animate(nowMs) {
 
   if (isDebug) {
     debugPanelEl.textContent =
-      `FPS: ${state.fps} | Pose: ${state.poseMs.toFixed(1)}ms | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})`;
+      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})`;
   }
 }
 
@@ -1402,6 +1422,8 @@ window.__game = {
   getMetrics: () => ({
     fps: state.fps,
     poseMs: state.poseMs,
+    camFps: state.camFps,
+    poseLatMs: state.poseLatMs,
     pixelCount: renderer.pixelCount,
     maxPixelBudget: 2_200_000,
     adaptiveScale: renderer.adaptiveScale,
