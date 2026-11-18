@@ -289,8 +289,8 @@ export class RaceRenderer {
 
     this.scene = new THREE.Scene();
     this.cameras = [
-      new THREE.PerspectiveCamera(58, 16 / 9, 0.5, 480),
-      new THREE.PerspectiveCamera(58, 16 / 9, 0.5, 480),
+      new THREE.PerspectiveCamera(58, 16 / 9, 0.5, 760),
+      new THREE.PerspectiveCamera(58, 16 / 9, 0.5, 760),
     ];
     this.camStates = [
       { x: 0, y: 4.5, z: 10, yaw: 0, initialized: false },
@@ -436,10 +436,12 @@ export class RaceRenderer {
 
     // 2. Textured Ground Plane
     const grassTex = makeGrassTexture(palette.grassA, palette.grassB, track.id === 'canyon' ? 'rock' : 'meadow');
-    const groundGeo = new THREE.PlaneGeometry(680, 680);
+    const ring = this._backdropRing(track);
+    const groundSize = Math.max(680, 2 * (ring.ringBase + 75 + 140));
+    const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize);
     groundGeo.rotateX(-Math.PI * 0.5);
     const groundMesh = new THREE.Mesh(groundGeo, new THREE.MeshToonMaterial({ map: grassTex, gradientMap: toonRamp }));
-    groundMesh.position.set(60, -0.06, 0);
+    groundMesh.position.set(ring.cx, -0.06, ring.cz);
     groundMesh.receiveShadow = true;
     this.trackGroup.add(groundMesh);
 
@@ -637,13 +639,28 @@ export class RaceRenderer {
     }
   }
 
+  // Centre and inner radius of the backdrop ring: clear of the whole track plus the biggest hill (r 50 x 1.3)
+  // and a safety margin.
+  _backdropRing(track) {
+    let x0 = Infinity; let x1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+    for (const s of track.samples) {
+      x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x); z0 = Math.min(z0, s.z); z1 = Math.max(z1, s.z);
+    }
+    const cx = (x0 + x1) / 2;
+    const cz = (z0 + z1) / 2;
+    let maxR = 0;
+    for (const s of track.samples) maxR = Math.max(maxR, Math.hypot(s.x - cx, s.z - cz));
+    return { cx, cz, maxR, ringBase: maxR + track.roadWidth / 2 + 145 };
+  }
+
   _buildSceneryProps(track, palette, scenery, backdrop) {
-    // Distant hills & snow-capped peaks around perimeter
-    const cx = 60;
-    const cz = 5;
+    // Distant hills & snow-capped peaks in a ring around THIS track: centred on its bounding box and pushed
+    // out past its farthest point (the ring used to be fixed around one spot, so on the longer circuits a
+    // mountain could stand on the road).
+    const { cx, cz, ringBase } = this._backdropRing(track);
     for (let i = 0; i < 18; i++) {
       const ang = (i / 18) * Math.PI * 2;
-      const dist = 215 + (i % 3) * 25;
+      const dist = ringBase + (i % 3) * 25;
       const hx = cx + Math.cos(ang) * dist;
       const hz = cz + Math.sin(ang) * dist;
       const r = 26 + (i % 4) * 8;
@@ -655,7 +672,7 @@ export class RaceRenderer {
       if (i % 2 === 0) {
         const mh = 55 + (i % 3) * 18;
         const mtn = new THREE.Group();
-        mtn.position.set(hx * 1.12, 0, hz * 1.12);
+        mtn.position.set(cx + Math.cos(ang) * (dist + 70), 0, cz + Math.sin(ang) * (dist + 70));
         const cone = part(new THREE.ConeGeometry(mh * 0.65, mh, 7), '#a99be6', { outline: 0, cast: false });
         cone.position.y = mh * 0.5 - 4;
         const snow = part(new THREE.ConeGeometry(mh * 0.25, mh * 0.38, 7), '#fffdf7', { outline: 0, cast: false });
