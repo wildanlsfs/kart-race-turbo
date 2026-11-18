@@ -1301,3 +1301,19 @@ body[data-mode="2p"] .hud-wheel { width: 32px; height: 32px; }
   .wz-dots { flex-wrap: wrap; gap: 4px; }
 }
 @media (max-width: 700px) and (orientation: portrait) { .wz-head { padding-right: 0; padding-top: 52px; } .wizard { padding-top: 8px; } }
+
+/* Calibration / lobby / podium cards must always be fully usable on short screens (phone landscape):
+   the card scrolls inside the viewport, and the spacing tightens so both camera buttons stay visible. */
+.overlay-modal { align-items: start; justify-items: center; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.overlay-modal > .cream-card { margin-block: auto; max-height: none; overflow: visible; }
+@media (max-height: 520px) {
+  .overlay-modal { padding: 50px 12px 10px; }
+  .overlay-modal > .cream-card { padding: 10px 16px 12px; border-radius: 22px; }
+  .overlay-modal > .cream-card h2 { font-size: 1.15rem; margin-bottom: 2px; }
+  .overlay-modal > .cream-card .card-lead { font-size: 0.8rem; margin-bottom: 6px; line-height: 1.25; }
+  .overlay-modal .calib-status-box { padding: 6px 10px; margin-bottom: 8px; border-radius: 14px; }
+  .overlay-modal .calib-timer { font-size: 1.4rem; }
+  .overlay-modal #calib-hint { font-size: 0.72rem; margin-top: 0; }
+  .overlay-modal .modal-actions { gap: 6px; }
+  .overlay-modal .modal-actions .btn-3d, .overlay-modal .modal-actions .btn-soft { min-height: 42px; padding-block: 6px; }
+}
