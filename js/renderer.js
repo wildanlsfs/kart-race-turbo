@@ -254,6 +254,7 @@ function makeGrassTexture(baseHex, accentHex, style = 'meadow') {
 }
 
 const TIRE_MAX_RAD = (28 * Math.PI) / 180;
+const shapedSteer = (v) => Math.sign(v) * Math.pow(Math.abs(v), 1.7); // same curve as sim.js STEER_CURVE
 export class RaceRenderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -1153,8 +1154,8 @@ export class RaceRenderer {
       m.driverGroup.rotation.x = k.turboActive ? -0.18 : 0;
 
       // Front wheel steer (spin dropped: tyres are bodies of revolution)
-      m.wheels[0].rotation.y = -k.steerAngle * TIRE_MAX_RAD; // front tyres: 28 deg at full 60 deg wheel lock (same as the sim)
-      m.wheels[1].rotation.y = -k.steerAngle * TIRE_MAX_RAD;
+      m.wheels[0].rotation.y = -shapedSteer(k.steerAngle) * TIRE_MAX_RAD; // front tyres: 28 deg at full 60 deg wheel lock (same as the sim)
+      m.wheels[1].rotation.y = -shapedSteer(k.steerAngle) * TIRE_MAX_RAD;
 
       // Arm animations: Punch forward, Hands-Up Turbo celebration, or Gripping Steering Wheel
       if (k.punching) {

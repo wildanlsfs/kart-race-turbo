@@ -49,10 +49,15 @@ export const WHEELBASE = 2.4;
 const GRIP_LAT = 24;
 const UNDERSTEER_SCRUB = 0.9;
 // Steer value (-1..1) that yields a wanted yaw rate (rad/s, positive = heading decreasing = turning right) at the kart's speed.
+// Response curve: small wheel angles turn gently, full lock is unchanged. Linear 1:1 made a quarter turn of the
+// wheel already spin the kart ~70 deg/s, which is what made it feel twitchy and dizzy.
+export const STEER_CURVE = 1.7;
+export const shapeSteer = (s) => Math.sign(s) * Math.pow(Math.abs(s), STEER_CURVE);
+const unshapeSteer = (s) => Math.sign(s) * Math.pow(Math.abs(s), 1 / STEER_CURVE);
 export function steerForYaw(kart, yawWanted) {
   const v = Math.max(3, Math.abs(kart.speed));
   const tire = Math.atan((yawWanted * WHEELBASE) / v);
-  return clamp(tire / TIRE_MAX, -1, 1);
+  return unshapeSteer(clamp(tire / TIRE_MAX, -1, 1));
 }
 const BARRIER_SCRUB = 1.6; // speed fraction lost per radian the soft barrier has to turn a kart
 const OFFROAD_SPEED = 0.55; // top-speed factor beyond the kerb (grass / sand)
@@ -456,7 +461,7 @@ export class RaceSimulation {
         }
         kart.wheelDeg = steerInput * WHEEL_MAX_DEG;
         // Bicycle model. Positive steer = right = heading decreases.
-        const tire = steerEff * TIRE_MAX;
+        const tire = shapeSteer(steerEff) * TIRE_MAX;
         const yawDemand = (kart.speed / WHEELBASE) * Math.tan(tire);
         const gripLimit = (kart.driver.stats.handling * GRIP_LAT) / Math.max(4, Math.abs(kart.speed));
         const yaw = clamp(yawDemand, -gripLimit, gripLimit);
