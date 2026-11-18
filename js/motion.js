@@ -66,6 +66,12 @@ function createSlotState() {
     neutralNoseX: 0.5,
     neutralShoulderY: 0.44,
     neutralWheelDeg: 0,
+    rawHist: [], // last raw hand-line angles (median-of-5 rejects 1-2 frame landmark glitches)
+    lastRawM: null,
+    spanRef: null, // wrist-to-wrist distance while holding the wheel (constant for a rigid wheel)
+    spanBad: 0,
+    lastWheelTilt: 0,
+    slewRaw: null,
     shoulderWidth: 0.18,
     lastSeenMs: -9999,
     lastSteer: 0,
@@ -233,6 +239,7 @@ export class MotionController {
       slot.neutralWheelDeg = clamp(a0, -10, 10);
     }
     slot.steerFilter.reset();
+    slot.rawHist = []; slot.lastRawM = null; slot.spanRef = null; slot.spanBad = 0; slot.lastWheelTilt = 0; slot.slewRaw = null;
     slot.yFilter.reset();
     slot.brakeStartMs = null;
   }
@@ -431,15 +438,42 @@ export class MotionController {
       rw.y > shMidY - sw * 0.6 && rw.y < shMidY + sw * 2.2;
 
     if (handsInWheelZone) {
-      const raw = handLineDeg(lw, rw, sw);
-      if (Math.abs(raw - slot.neutralWheelDeg) < 12) {
-        // The straight-ahead angle follows the hands while they stay within 12 deg of it, so a calibration taken
-        // in another posture (or a slowly sagging wheel) never leaves a permanent pull to one side. Deliberate
-        // turns (more than 12 deg off) never drift away. It used to wait for steer ~ 0, which a pulled wheel never reaches.
-        slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.5 * dtAdapt);
+      const wheelVis = (w) => w.visibility === undefined || w.visibility > 0.5;
+      const span = Math.hypot(rw.x - lw.x, rw.y - lw.y);
+      if (slot.spanRef === null) slot.spanRef = span;
+      // Hands on a rigid wheel keep the same distance whatever the angle. A frame where the distance jumps, or a
+      // wrist is only faintly detected, is a landmark glitch (measured: one wrist off by 0.25 for 3 frames gave a
+      // 33 deg wheel jump and a sudden turn off the road): hold the last good reading instead of steering on it.
+      const spanOk = Math.abs(span - slot.spanRef) <= 0.12 * slot.spanRef;
+      const trusted = wheelVis(lw) && wheelVis(rw) && spanOk;
+      if (spanOk) { slot.spanRef += (span - slot.spanRef) * 0.05; slot.spanBad = 0; }
+      else if (++slot.spanBad > 15) { slot.spanRef = span; slot.spanBad = 0; } // grip really changed (0.5 s): re-learn it
+      if (trusted) {
+        slot.rawHist.push(handLineDeg(lw, rw, sw));
+        if (slot.rawHist.length > 5) slot.rawHist.shift();
+        const sorted = [...slot.rawHist].sort((x, y) => x - y);
+        slot.lastRawM = sorted[sorted.length >> 1]; // median: a 1-2 frame outlier never reaches the wheel
       }
-      wheelTiltRight = clamp((raw - slot.neutralWheelDeg) / WHEEL_MAX_DEG, -1, 1);
+      if (slot.lastRawM !== null) {
+        // Slew limit on the reading itself: a hand can turn a wheel at most ~450 deg/s (a fast flick), anything
+        // beyond that between two frames is a glitch, and it can only move the reading that far per frame.
+        const tSlew = dtAdapt; // seconds since the previous frame (computed before lastEvalSec is overwritten)
+        let raw = slot.lastRawM;
+        if (slot.slewRaw !== null && slot.slewRaw !== undefined) {
+          const maxStep = 450 * tSlew;
+          raw = slot.slewRaw + clamp(raw - slot.slewRaw, -maxStep, maxStep);
+        }
+        slot.slewRaw = raw;
+        if (Math.abs(raw - slot.neutralWheelDeg) < 12) {
+          // The straight-ahead angle follows the hands while they stay within 12 deg of it, so a calibration taken
+          // in another posture (or a slowly sagging wheel) never leaves a permanent pull to one side. Deliberate
+          // turns (more than 12 deg off) never drift away.
+          slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.5 * dtAdapt);
+        }
+        wheelTiltRight = clamp((raw - slot.neutralWheelDeg) / WHEEL_MAX_DEG, -1, 1);
+      }
     }
+    slot.lastWheelTilt = wheelTiltRight;
 
     // Wheel angle (exact, 1:1) plus body lean (for players who also lean into the bend).
     const rawSteer = attack

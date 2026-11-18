@@ -175,3 +175,44 @@ test('A deliberate 30 degree turn held for 4 seconds is not drifted away', () =>
   for (let i = 0; i < 120; i++) out = ctrl.update([wheelPose(30, 0.75)], 1000 + i * 33, 1)[0];
   assert.ok(out.steer * 60 >= 22, `a held 30 deg turn faded to ${(out.steer * 60).toFixed(1)} deg`);
 });
+
+test('A landmark glitch of a few frames (a wrist jumping or leaving the wheel) does not turn the kart', () => {
+  const glitches = {
+    'one wrist jumps up': (p) => { p.landmarks[16].y -= 0.10; },
+    'one wrist drops to the lap': (p) => { p.landmarks[15].y += 0.25; },
+    'wrists swap': (p) => { const a = p.landmarks[15]; p.landmarks[15] = p.landmarks[16]; p.landmarks[16] = a; },
+    'one wrist faintly detected, far off': (p) => { p.landmarks[15] = { ...p.landmarks[15], y: p.landmarks[15].y + 0.3, visibility: 0.4 }; },
+  };
+  for (const [label, glitch] of Object.entries(glitches)) {
+    for (const frames of [1, 2, 3, 6]) {
+      // 1-2 frame glitches are removed completely (median of 5). A 3+ frame glitch of this small a jump
+      // (0.10 of the frame) is indistinguishable from a real small turn, so it may show as a small wheel
+      // movement (under ~12 deg), but never as a turn that takes the kart off the road (it was 33 deg).
+      const ctrl = new MotionController({ autoGas: true });
+      ctrl.calibrate([wheelPose(0, 0.75)], 1);
+      let peak = 0;
+      for (let i = 0; i < 120; i++) {
+        const p = wheelPose(0, 0.75);
+        if (i >= 40 && i < 40 + frames) glitch(p);
+        const out = ctrl.update([p], 1000 + i * 33, 1)[0];
+        peak = Math.max(peak, Math.abs(out.steer * 60));
+      }
+      // Big glitches (wrist far off, swapped, faintly detected) are rejected at any length up to 6 frames. The small
+      // 'wrist jumps up 0.10' one equals a real 18 deg turn, so beyond 2 frames it may show as at most that angle.
+      const small = label === 'one wrist jumps up';
+      const limit = frames <= 2 ? 1 : (small ? 18 : 3);
+      assert.ok(peak <= limit, `${label}, ${frames} frame(s): wheel jumped to ${peak.toFixed(1)} deg (limit ${limit})`);
+    }
+  }
+});
+
+test('A real turn is still followed quickly (a glitch filter must not make the wheel lag)', () => {
+  const ctrl = new MotionController({ autoGas: true });
+  ctrl.calibrate([wheelPose(0, 0.75)], 1);
+  let out; let reached = -1;
+  for (let i = 0; i < 40; i++) {
+    out = ctrl.update([wheelPose(i < 10 ? 0 : -45, 0.75)], 1000 + i * 33, 1)[0];
+    if (reached < 0 && i >= 10 && out.steer * 60 <= -30) reached = i - 10;
+  }
+  assert.ok(reached >= 0 && reached <= 6, `wheel took ${reached} frames (${reached * 33} ms) to reach 30 deg of a 45 deg turn`);
+});
