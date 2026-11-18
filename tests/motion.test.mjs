@@ -134,18 +134,19 @@ function wheelPose(thetaDeg, radiusSw, { sw = 0.2, cx = 0.5, sy = 0.42 } = {}) {
   return p;
 }
 
-test('Turning an imaginary steering wheel steers 1:1 up to 60 degrees, for any hand spacing, both ways', () => {
+test('Turning an imaginary steering wheel steers 1:1 up to 90 degrees, for any hand spacing, both ways', () => {
   for (const radius of [0.5, 0.75, 1.0, 1.4]) {
-    for (const deg of [-60, -45, -30, -15, 15, 30, 45, 60]) {
+    for (const deg of [-75, -60, -45, -30, -15, 15, 30, 45, 60, 75]) {
+      if (radius > 1.2 && Math.abs(deg) > 60) continue; // such a wide grip at that angle puts the hands below the wheel zone
       const ctrl = new MotionController({ autoGas: true });
       ctrl.calibrate([wheelPose(0, radius)], 1);
       let out;
       for (let i = 0; i < 40; i++) out = ctrl.update([wheelPose(deg, radius)], 1000 + i * 33, 1)[0];
-      const wheel = out.steer * 60;
+      const wheel = out.steer * 90;
       assert.ok(Math.sign(wheel) === Math.sign(deg), `radius ${radius} deg ${deg}: wrong direction (${wheel})`);
-      // within the dead zone plus filter slack of the real angle, never beyond +-60
+      // within the dead zone plus filter slack of the real angle, never beyond +-90
       assert.ok(Math.abs(wheel - deg) <= 8, `radius ${radius} deg ${deg}: wheel read ${wheel.toFixed(1)}`);
-      assert.ok(Math.abs(wheel) <= 60.001);
+      assert.ok(Math.abs(wheel) <= 90.001);
     }
   }
 });
@@ -164,7 +165,7 @@ test('A wheel held "straight" at a slightly different angle than at calibration 
     ctrl.calibrate([wheelPose(0, 0.75)], 1);
     let out;
     for (let i = 0; i < 150; i++) out = ctrl.update([wheelPose(offset, 0.75)], 1000 + i * 33, 1)[0]; // ~5 s
-    assert.ok(Math.abs(out.steer * 60) <= 2, `held at ${offset} deg: still steering ${(out.steer * 60).toFixed(1)} deg after 5 s`);
+    assert.ok(Math.abs(out.steer * 90) <= 2, `held at ${offset} deg: still steering ${(out.steer * 90).toFixed(1)} deg after 5 s`);
   }
 });
 
@@ -173,7 +174,7 @@ test('A deliberate 30 degree turn held for 4 seconds is not drifted away', () =>
   ctrl.calibrate([wheelPose(0, 0.75)], 1);
   let out;
   for (let i = 0; i < 120; i++) out = ctrl.update([wheelPose(30, 0.75)], 1000 + i * 33, 1)[0];
-  assert.ok(out.steer * 60 >= 22, `a held 30 deg turn faded to ${(out.steer * 60).toFixed(1)} deg`);
+  assert.ok(out.steer * 90 >= 22, `a held 30 deg turn faded to ${(out.steer * 90).toFixed(1)} deg`);
 });
 
 test('A landmark glitch of a few frames (a wrist jumping or leaving the wheel) does not turn the kart', () => {
@@ -195,7 +196,7 @@ test('A landmark glitch of a few frames (a wrist jumping or leaving the wheel) d
         const p = wheelPose(0, 0.75);
         if (i >= 40 && i < 40 + frames) glitch(p);
         const out = ctrl.update([p], 1000 + i * 33, 1)[0];
-        peak = Math.max(peak, Math.abs(out.steer * 60));
+        peak = Math.max(peak, Math.abs(out.steer * 90));
       }
       // Big glitches (wrist far off, swapped, faintly detected) are rejected at any length up to 6 frames. The small
       // 'wrist jumps up 0.10' one equals a real 18 deg turn, so beyond 2 frames it may show as at most that angle.
@@ -212,7 +213,7 @@ test('A real turn is still followed quickly (a glitch filter must not make the w
   let out; let reached = -1;
   for (let i = 0; i < 40; i++) {
     out = ctrl.update([wheelPose(i < 10 ? 0 : -45, 0.75)], 1000 + i * 33, 1)[0];
-    if (reached < 0 && i >= 10 && out.steer * 60 <= -30) reached = i - 10;
+    if (reached < 0 && i >= 10 && out.steer * 90 <= -30) reached = i - 10;
   }
   assert.ok(reached >= 0 && reached <= 6, `wheel took ${reached} frames (${reached * 33} ms) to reach 30 deg of a 45 deg turn`);
 });

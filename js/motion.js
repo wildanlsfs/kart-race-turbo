@@ -45,7 +45,7 @@ export class OneEuroFilter {
   }
 }
 
-const WHEEL_MAX_DEG = 60;
+const WHEEL_MAX_DEG = 90;
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -480,7 +480,7 @@ export class MotionController {
       ? 0
       : clamp(bodyLeanRight + wheelTiltRight, -1, 1);
 
-    const deadzone = 0.10;
+    const deadzone = 0.067; // ~6 deg of wheel
     const dzSteer = Math.abs(rawSteer) < deadzone
       ? 0
       : Math.sign(rawSteer) * ((Math.abs(rawSteer) - deadzone) / (1 - deadzone));

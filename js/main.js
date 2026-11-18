@@ -95,7 +95,7 @@ for (const btn of document.querySelectorAll('[data-touch]')) {
   btn.addEventListener('lostpointercapture', end);
 }
 
-// Touch steering wheel: drag around the wheel centre; the wheel angle (+-60 deg) is the input position and it
+// Touch steering wheel: drag around the wheel centre; the wheel angle (+-90 deg) is the input position and it
 // springs back to centre on release. Pointer capture keeps a finger that slides off the wheel steering.
 const wheelTouch = new WheelTouch();
 const steerPadEl = document.getElementById('steer-pad');
@@ -121,7 +121,7 @@ function clearTouchInput() {
   if (steerPadEl) steerPadEl.classList.remove('pressed');
   for (const b of document.querySelectorAll('[data-touch]')) b.classList.remove('pressed');
 }
-// returns the touch wheel angle in degrees (+-60)
+// returns the touch wheel angle in degrees (+-90)
 function updateTouchSteer(dt) {
   const deg = wheelTouch.update(dt);
   if (steerArtEl) steerArtEl.style.transform = `rotate(${deg}deg)`;
@@ -1471,7 +1471,7 @@ function animate(nowMs) {
           const n = state.sim._findNearestSample(k.x, k.z);
           edge = ` | Edge: ${(state.sim.track.roadWidth / 2 - n.dist).toFixed(1)}m left`;
         }
-        steerTxt = ` | Wheel: ${Math.round((k.steerAngle || 0) * 60)}° | Spd: ${k.speed.toFixed(1)} | Yaw: ${Math.round(yawDegS)}°/s${edge}`;
+        steerTxt = ` | Wheel: ${Math.round((k.steerAngle || 0) * 90)}° | Spd: ${k.speed.toFixed(1)} | Yaw: ${Math.round(yawDegS)}°/s${edge}`;
       }
     } catch (_) { /* debug only */ }
     debugPanelEl.textContent =

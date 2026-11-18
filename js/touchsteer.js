@@ -61,7 +61,7 @@ export class SteerPad {
 }
 
 // ===== Virtual steering wheel (position control, +-60 deg) =====
-export const WHEEL_LIMIT_DEG = 60;
+export const WHEEL_LIMIT_DEG = 90;
 export const WHEEL_RETURN_DEG_S = 320; // spring-back speed after release
 export const KEY_TURN_DEG_S = 200; // keyboard: wheel turn speed towards +-60
 export const KEY_RETURN_DEG_S = 320; // keyboard: return to centre on release

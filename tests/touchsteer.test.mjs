@@ -68,7 +68,7 @@ test('pointerAngleDeg: 0 = up, clockwise positive', () => {
   assert.equal(Math.round(pointerAngleDeg(200, 300, 200, 200)), 180);
 });
 
-test('WheelTouch: the wheel angle is the swept finger angle (position), clamped to +-60, springs back on release', () => {
+test('WheelTouch: the wheel angle is the swept finger angle (position), clamped to +-90, springs back on release', () => {
   const w = new WheelTouch();
   assert.equal(w.press(1, 200, 100, C), true);
   assert.equal(w.press(2, 100, 200, C), false, 'a second finger is ignored');
@@ -76,16 +76,16 @@ test('WheelTouch: the wheel angle is the swept finger angle (position), clamped 
   const r = 100; const a = (30 * Math.PI) / 180;
   w.move(1, 200 + r * Math.sin(a), 200 - r * Math.cos(a));
   assert.ok(Math.abs(w.update(1 / 60) - 30) < 0.01, `30 deg, got ${w.deg}`);
-  // finger goes on to 100 deg: wheel stays at the +60 limit
+  // finger goes on to 100 deg: wheel stays at the +90 limit
   for (let d = 40; d <= 100; d += 10) { const q = (d * Math.PI) / 180; w.move(1, 200 + r * Math.sin(q), 200 - r * Math.cos(q)); }
-  assert.equal(w.update(1 / 60), 60);
+  assert.equal(w.update(1 / 60), 90);
   // negative side is symmetric
   for (let d = 90; d >= -100; d -= 10) { const q = (d * Math.PI) / 180; w.move(1, 200 + r * Math.sin(q), 200 - r * Math.cos(q)); }
-  assert.equal(w.update(1 / 60), -60);
-  w.move(2, 0, 0); assert.equal(w.deg, -60, 'other pointers do nothing');
+  assert.equal(w.update(1 / 60), -90);
+  w.move(2, 0, 0); assert.equal(w.deg, -90, 'other pointers do nothing');
   assert.equal(w.release(1), true);
   let prev = w.update(1 / 60);
-  assert.ok(prev > -60, 'springs back');
+  assert.ok(prev > -90, 'springs back');
   for (let i = 0; i < 60; i++) { const v = w.update(1 / 60); assert.ok(v >= prev); prev = v; }
   assert.equal(prev, 0);
 });
@@ -98,16 +98,16 @@ test('WheelTouch: unwinding after over-travel and a grab at the side do not jump
   assert.ok(Math.abs(w.update(1 / 60) - 10) < 0.01);
 });
 
-test('Keyboard wheel: turns at ~200 deg/s towards +-60, holds, returns to centre', () => {
+test('Keyboard wheel: turns at ~200 deg/s towards +-90, holds, returns to centre', () => {
   let d = 0;
   for (let i = 0; i < 30; i++) d = stepKeyWheel(d, 1, 1 / 60); // 0.5 s
-  assert.ok(d > 55 || d === 60, `after 0.5 s ${d}`);
+  assert.ok(d > 85 || d === 90, `after 0.5 s ${d}`);
   assert.ok(Math.abs(stepKeyWheel(0, 1, 0.1) - 20) < 0.01, '200 deg/s');
   for (let i = 0; i < 60; i++) d = stepKeyWheel(d, 1, 1 / 60);
-  assert.equal(d, 60);
+  assert.equal(d, 90);
   for (let i = 0; i < 60; i++) d = stepKeyWheel(d, 0, 1 / 60);
   assert.equal(d, 0);
-  assert.equal(stepKeyWheel(0, -1, 1), -60);
+  assert.equal(stepKeyWheel(0, -1, 1), -90);
 });
 
 test('A kart steered with the touch wheel angle (position control) finishes a Canyon lap within 25 % of a perfect look-ahead bot', () => {
@@ -120,9 +120,9 @@ test('A kart steered with the touch wheel angle (position control) finishes a Ca
       let steer = bot.steer;
       if (mode === 'wheel') {
         // the thumb: aims for the wanted wheel angle by sweeping around the wheel centre (finger noise included)
-        const want = steer * 60 + Math.sin(t * 7) * 1.5;
+        const want = steer * 90 + Math.sin(t * 7) * 1.5;
         if (!w.active) w.press(1, 200, 100, C);
-        const cur = w.deg; const target = Math.max(-60, Math.min(60, want));
+        const cur = w.deg; const target = Math.max(-90, Math.min(90, want));
         const q = ((target - cur) * Math.PI) / 180 + (Math.atan2(w.lastAngle ? Math.sin(w.lastAngle * Math.PI / 180) : 0, Math.cos(w.lastAngle * Math.PI / 180)));
         const a = Math.atan2(Math.sin(q), Math.cos(q));
         w.move(1, 200 + 100 * Math.sin(a), 200 - 100 * Math.cos(a));
