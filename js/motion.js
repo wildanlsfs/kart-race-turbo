@@ -227,7 +227,10 @@ export class MotionController {
       const w2 = pose.landmarks?.[16];
       const ok = (w) => w && (w.visibility === undefined || w.visibility > 0.35);
       // The hands' angle at calibration is the straight-ahead position of the wheel.
-      slot.neutralWheelDeg = ok(w1) && ok(w2) ? handLineDeg(w1, w2, Math.max(0.08, pose.shoulderWidth)) : 0;
+      // Calibration usually happens while the hands are still resting, so that angle is only a hint: trusted up to
+      // +-10 deg and then corrected continuously while playing (see the drift below).
+      const a0 = ok(w1) && ok(w2) ? handLineDeg(w1, w2, Math.max(0.08, pose.shoulderWidth)) : 0;
+      slot.neutralWheelDeg = clamp(a0, -10, 10);
     }
     slot.steerFilter.reset();
     slot.yFilter.reset();
@@ -429,9 +432,11 @@ export class MotionController {
 
     if (handsInWheelZone) {
       const raw = handLineDeg(lw, rw, sw);
-      if (Math.abs(slot.lastSteer) < 0.05) {
-        // slow drift of the straight-ahead angle while the wheel is not being turned
-        slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.2 * dtAdapt);
+      if (Math.abs(raw - slot.neutralWheelDeg) < 12) {
+        // The straight-ahead angle follows the hands while they stay within 12 deg of it, so a calibration taken
+        // in another posture (or a slowly sagging wheel) never leaves a permanent pull to one side. Deliberate
+        // turns (more than 12 deg off) never drift away. It used to wait for steer ~ 0, which a pulled wheel never reaches.
+        slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.5 * dtAdapt);
       }
       wheelTiltRight = clamp((raw - slot.neutralWheelDeg) / WHEEL_MAX_DEG, -1, 1);
     }

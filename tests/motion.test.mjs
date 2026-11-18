@@ -157,3 +157,21 @@ test('Hands held at the calibrated spot (any height from chest to belly) read as
   for (let i = 0; i < 30; i++) out = ctrl.update([wheelPose(0, 0.75)], 1000 + i * 33, 1)[0];
   assert.equal(out.steer, 0);
 });
+
+test('A wheel held "straight" at a slightly different angle than at calibration does not pull the kart to one side', () => {
+  for (const offset of [-12, -8, -4, 4, 8, 12]) {
+    const ctrl = new MotionController({ autoGas: true });
+    ctrl.calibrate([wheelPose(0, 0.75)], 1);
+    let out;
+    for (let i = 0; i < 150; i++) out = ctrl.update([wheelPose(offset, 0.75)], 1000 + i * 33, 1)[0]; // ~5 s
+    assert.ok(Math.abs(out.steer * 60) <= 2, `held at ${offset} deg: still steering ${(out.steer * 60).toFixed(1)} deg after 5 s`);
+  }
+});
+
+test('A deliberate 30 degree turn held for 4 seconds is not drifted away', () => {
+  const ctrl = new MotionController({ autoGas: true });
+  ctrl.calibrate([wheelPose(0, 0.75)], 1);
+  let out;
+  for (let i = 0; i < 120; i++) out = ctrl.update([wheelPose(30, 0.75)], 1000 + i * 33, 1)[0];
+  assert.ok(out.steer * 60 >= 22, `a held 30 deg turn faded to ${(out.steer * 60).toFixed(1)} deg`);
+});
