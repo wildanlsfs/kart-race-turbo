@@ -119,3 +119,48 @@ test('LAN room settings: default Normal/3 laps, host sets difficulty+laps, playe
     await srv.close();
   }
 });
+
+test('The room list only shows rooms a friend can still join (lobby, free seat), so old rooms never fill the Wi-Fi join screen', async () => {
+  const srv = await createLanServer({ port: 0, host: '127.0.0.1', quiet: true });
+  try {
+    const open = async () => {
+      const ws = srv.createTestWsClient();
+      const inbox = [];
+      ws.on?.('message', () => {});
+      return { ws, inbox };
+    };
+    const waitMsg = (ws, type) => new Promise((resolve) => {
+      const handler = (ev) => {
+        const m = JSON.parse(typeof ev === 'string' ? ev : ev.data);
+        if (m.type === type) { ws.removeEventListener?.('message', handler); resolve(m); }
+      };
+      ws.addEventListener('message', handler);
+    });
+    const hostA = (await open()).ws; const hostB = (await open()).ws; const hostC = (await open()).ws;
+    const guest = (await open()).ws; const g2 = (await open()).ws; const g3 = (await open()).ws;
+    const created = [];
+    for (const h of [hostA, hostB, hostC]) {
+      const p = waitMsg(h, 'room_state');
+      h.send(JSON.stringify({ type: 'create_room', name: 'Host', driverId: 'rufus', trackId: 'island' }));
+      created.push((await p).room.code);
+    }
+    const [codeA, codeB, codeC] = created;
+    assert.equal(srv.getLanInfo().rooms.length, 3, 'three open lobbies are listed');
+
+    // B starts racing: no longer joinable
+    hostB.send(JSON.stringify({ type: 'start_race', fillAI: true }));
+    await new Promise((r) => setTimeout(r, 150));
+    // C fills up to 4 players
+    for (const g of [guest, g2, g3]) {
+      const p = waitMsg(g, 'room_state');
+      g.send(JSON.stringify({ type: 'join_room', code: codeC, name: 'G' }));
+      await p;
+    }
+    const codes = srv.getLanInfo().rooms.map((r) => r.code);
+    assert.ok(codes.includes(codeA), 'a lobby with a free seat is listed');
+    assert.ok(!codes.includes(codeB), 'a room that is racing is not listed');
+    assert.ok(!codes.includes(codeC), 'a full room is not listed');
+  } finally {
+    await srv.close();
+  }
+});

@@ -152,6 +152,24 @@ function makeRoomCode(existingRooms) {
 
 export async function createLanServer({ port = Number(process.env.PORT || 3000), host = '0.0.0.0', quiet = false } = {}) {
   const rooms = new Map();
+  // The join list only shows rooms a friend can actually enter: still in the lobby, with a free seat and a
+  // connected host. Finished / running / empty rooms used to pile up and push the Join button off the screen.
+  const listJoinableRooms = () => {
+    const out = [];
+    for (const room of rooms.values()) {
+      const playerCount = room.players.filter((p) => p.connected).length;
+      if (room.status !== 'lobby' || playerCount < 1 || playerCount >= 4) continue;
+      out.push({
+        code: room.code,
+        trackId: room.trackId,
+        difficulty: room.difficulty,
+        hostName: room.players[0]?.name || 'Host',
+        playerCount,
+        status: room.status,
+      });
+    }
+    return out;
+  };
   const clients = new Set();
 
   const serializeRoom = (room) => ({
@@ -199,17 +217,7 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
 
     if (urlObj.pathname === '/api/lan-info') {
       const actualPort = server.address()?.port || port;
-      const activeRooms = [];
-      for (const room of rooms.values()) {
-        activeRooms.push({
-          code: room.code,
-          trackId: room.trackId,
-          difficulty: room.difficulty,
-          hostName: room.players[0]?.name || 'Host',
-          playerCount: room.players.filter((p) => p.connected).length,
-          status: room.status,
-        });
-      }
+      const activeRooms = listJoinableRooms();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ urls: getLanUrls(actualPort), rooms: activeRooms }));
       return;
@@ -454,17 +462,7 @@ export async function createLanServer({ port = Number(process.env.PORT || 3000),
     port: actualPort,
     urls,
     getLanInfo: () => {
-      const activeRooms = [];
-      for (const room of rooms.values()) {
-        activeRooms.push({
-          code: room.code,
-          trackId: room.trackId,
-          difficulty: room.difficulty,
-          hostName: room.players[0]?.name || 'Host',
-          playerCount: room.players.filter((p) => p.connected).length,
-          status: room.status,
-        });
-      }
+      const activeRooms = listJoinableRooms();
       return { urls: getLanUrls(actualPort), rooms: activeRooms };
     },
     createTestWsClient: () => {

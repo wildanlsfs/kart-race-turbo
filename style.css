@@ -1317,3 +1317,9 @@ body[data-mode="2p"] .hud-wheel { width: 32px; height: 32px; }
   .overlay-modal .modal-actions { gap: 6px; }
   .overlay-modal .modal-actions .btn-3d, .overlay-modal .modal-actions .btn-soft { min-height: 42px; padding-block: 6px; }
 }
+
+/* Wi-Fi join step: the room list scrolls inside its box, so the code field and Join button never leave the screen. */
+.wz-join .lan-rooms-list { max-height: min(34vh, 260px); overflow-y: auto; overscroll-behavior: contain; }
+.wz-join .lan-box { min-height: 0; }
+#menu-modal .wz-step[data-step="join"] { overflow-y: auto; max-height: 100%; }
+@media (max-height: 520px) { .wz-join .lan-rooms-list { max-height: 34vh; } }

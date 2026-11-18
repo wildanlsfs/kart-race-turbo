@@ -1089,7 +1089,7 @@ async function refreshLanLobby() {
     lanRoomsListEl.innerHTML = '<p class="muted-note">No rooms yet. Ask the host to create one.</p>';
     return;
   }
-  for (const r of info.rooms) {
+  for (const r of info.rooms.filter((q) => !q.status || q.status === 'lobby').slice(0, 8)) {
     const item = document.createElement('div');
     item.className = 'room-item';
     item.innerHTML = `
