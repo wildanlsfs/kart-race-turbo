@@ -254,7 +254,7 @@ function makeGrassTexture(baseHex, accentHex, style = 'meadow') {
 }
 
 const TIRE_MAX_RAD = (28 * Math.PI) / 180;
-const shapedSteer = (v) => Math.sign(v) * Math.pow(Math.abs(v), 1.7); // same curve as sim.js STEER_CURVE
+const shapedSteer = (v) => Math.sign(v) * Math.pow(Math.abs(v), 1.3); // same curve as sim.js STEER_CURVE
 export class RaceRenderer {
   constructor(canvas) {
     this.canvas = canvas;

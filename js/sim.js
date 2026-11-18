@@ -51,7 +51,7 @@ const UNDERSTEER_SCRUB = 0.9;
 // Steer value (-1..1) that yields a wanted yaw rate (rad/s, positive = heading decreasing = turning right) at the kart's speed.
 // Response curve: small wheel angles turn gently, full lock is unchanged. Linear 1:1 made a quarter turn of the
 // wheel already spin the kart ~70 deg/s, which is what made it feel twitchy and dizzy.
-export const STEER_CURVE = 1.7;
+export const STEER_CURVE = 1.3;
 export const shapeSteer = (s) => Math.sign(s) * Math.pow(Math.abs(s), STEER_CURVE);
 const unshapeSteer = (s) => Math.sign(s) * Math.pow(Math.abs(s), 1 / STEER_CURVE);
 export function steerForYaw(kart, yawWanted) {
