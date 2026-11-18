@@ -1143,6 +1143,7 @@ document.getElementById('btn-lan-camera').addEventListener('click', () => {
 document.getElementById('btn-lan-leave').addEventListener('click', leaveLobby);
 
 // Combine Webcam Motion Input + Keyboard/Touch Input
+let dbgPrevHeading = null;
 let touchSteerValue = 0;
 let frameDt = 1 / 60;
 const kbWheelDeg = [0, 0]; // keyboard wheel angle per player (degrees)
@@ -1441,8 +1442,23 @@ function animate(nowMs) {
   }
 
   if (isDebug) {
+    // Steering readout for bug reports: wheel angle, speed, actual yaw rate and distance to the road edge.
+    let steerTxt = '';
+    try {
+      const k = state.lastSnapshot && state.lastSnapshot.karts.find((q) => q.id === (state.lanPlayerId || 'p1'));
+      if (k) {
+        const yawDegS = dbgPrevHeading === null ? 0 : (((k.heading - dbgPrevHeading + Math.PI * 3) % (Math.PI * 2)) - Math.PI) / Math.max(0.001, dt) * 57.2958;
+        dbgPrevHeading = k.heading;
+        let edge = '';
+        if (state.sim && state.sim._findNearestSample) {
+          const n = state.sim._findNearestSample(k.x, k.z);
+          edge = ` | Edge: ${(state.sim.track.roadWidth / 2 - n.dist).toFixed(1)}m left`;
+        }
+        steerTxt = ` | Wheel: ${Math.round((k.steerAngle || 0) * 60)}° | Spd: ${k.speed.toFixed(1)} | Yaw: ${Math.round(yawDegS)}°/s${edge}`;
+      }
+    } catch (_) { /* debug only */ }
     debugPanelEl.textContent =
-      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | AI: ${state.poseDelegate || '-'} ${state.poseW}px | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})`;
+      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | AI: ${state.poseDelegate || '-'} ${state.poseW}px | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})${steerTxt}`;
   }
 }
 
