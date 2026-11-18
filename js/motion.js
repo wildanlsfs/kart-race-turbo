@@ -77,7 +77,9 @@ function createSlotState() {
     prevRightReach: 0,
     prevLeftWrist: null,
     prevRightWrist: null,
-    steerFilter: new OneEuroFilter(1.1, 0.025),
+    // Responsive but steady: a deliberate wheel turn must show within ~100 ms (a low beta made the
+    // wheel crawl for ~0.4 s), while jitter on a held hand is still smoothed by the low cutoff.
+    steerFilter: new OneEuroFilter(1.6, 0.9),
     yFilter: new OneEuroFilter(1.5, 0.05),
     wheelAngleDeg: 0,
     poseLabel: 'READY',
