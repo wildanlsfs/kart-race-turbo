@@ -307,6 +307,7 @@ export class MotionController {
   _evalSlot(slot, pose, nowMs) {
     const tSec = nowMs / 1000;
     if (!pose) {
+      slot.dbg = { pose: 0 };
       const alive = (nowMs - slot.lastSeenMs) <= this.dropoutMs;
       return {
         throttle: alive ? slot.lastThrottle : 0,
@@ -324,6 +325,7 @@ export class MotionController {
     }
 
     slot.lastSeenMs = nowMs;
+    const dbg = slot.dbg = { pose: 1 }; // per-frame decision record for the camera log (?debug)
     const lm = pose.landmarks;
     const sw = Math.max(0.08, pose.shoulderWidth);
     const shMidX = pose.centerX;
@@ -437,6 +439,9 @@ export class MotionController {
       lw.y > shMidY - sw * 0.6 && lw.y < shMidY + sw * 2.2 &&
       rw.y > shMidY - sw * 0.6 && rw.y < shMidY + sw * 2.2;
 
+    dbg.zone = handsInWheelZone ? 1 : 0; dbg.lwOk = lwOk ? 1 : 0; dbg.rwOk = rwOk ? 1 : 0;
+    dbg.lwx = lw.x; dbg.lwy = lw.y; dbg.lwv = lw.visibility; dbg.rwx = rw.x; dbg.rwy = rw.y; dbg.rwv = rw.visibility;
+    dbg.sw = sw; dbg.shY = shMidY; dbg.attack = attack ? 1 : 0; dbg.overhead = handsOverhead ? 1 : 0;
     if (handsInWheelZone) {
       const wheelVis = (w) => w.visibility === undefined || w.visibility > 0.5;
       const span = Math.hypot(rw.x - lw.x, rw.y - lw.y);
@@ -448,6 +453,8 @@ export class MotionController {
       const trusted = wheelVis(lw) && wheelVis(rw) && spanOk;
       if (spanOk) { slot.spanRef += (span - slot.spanRef) * 0.05; slot.spanBad = 0; }
       else if (++slot.spanBad > 15) { slot.spanRef = span; slot.spanBad = 0; } // grip really changed (0.5 s): re-learn it
+      dbg.span = span; dbg.spanRef = slot.spanRef; dbg.spanOk = spanOk ? 1 : 0; dbg.trusted = trusted ? 1 : 0;
+      dbg.rawAngle = handLineDeg(lw, rw, sw);
       if (trusted) {
         slot.rawHist.push(handLineDeg(lw, rw, sw));
         if (slot.rawHist.length > 5) slot.rawHist.shift();
@@ -471,6 +478,7 @@ export class MotionController {
           slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.5 * dtAdapt);
         }
         wheelTiltRight = clamp((raw - slot.neutralWheelDeg) / WHEEL_MAX_DEG, -1, 1);
+        dbg.median = slot.lastRawM; dbg.slew = raw; dbg.neutral = slot.neutralWheelDeg;
       }
     }
     slot.lastWheelTilt = wheelTiltRight;
@@ -490,6 +498,7 @@ export class MotionController {
     const filteredSteer = slot.steerFilter.filter(curvedSteer, tSec);
     const steer = Math.abs(filteredSteer) < 0.01 ? 0 : clamp(filteredSteer, -1, 1);
     slot.wheelAngleDeg = Math.round(steer * WHEEL_MAX_DEG);
+    dbg.bodyLean = bodyLeanRight; dbg.wheelTilt = wheelTiltRight; dbg.rawSteer = rawSteer; dbg.steer = steer;
 
     // Gently adapt neutralShoulderY when standing upright (like body-runner line 331)
     if (!jumped && !crouched) {
@@ -519,6 +528,7 @@ export class MotionController {
 
     slot.poseLabel = poseLabel;
 
+    slot.dbg.label = poseLabel; slot.dbg.brake = brake ? 1 : 0;
     return {
       throttle,
       brake,

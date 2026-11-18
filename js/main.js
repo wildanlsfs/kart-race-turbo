@@ -1353,6 +1353,42 @@ document.getElementById('btn-race-again').addEventListener('click', () => {
 document.getElementById('btn-finish-menu').addEventListener('click', leaveToMenu);
 
 const isDebug = new URLSearchParams(window.location.search).has('debug');
+// Camera log (?debug): one row per frame with the raw hand points, every filter decision and the final steer, so
+// a "my hands jump / the kart turns by itself" report can be read back. Press L to download it as CSV (window.__camlog too).
+const fmtN = (v, n = 0) => (typeof v === 'number' ? v.toFixed(n) : '-');
+const camLog = [];
+let camLogLast = null;
+function recordCamLog(nowMs, inputs) {
+  const slot = motionCtrl.slots[0];
+  const d = (slot && slot.dbg) || { pose: 0 };
+  const inp = inputs[0] || {};
+  const k = state.lastSnapshot && state.lastSnapshot.karts.find((q) => q.id === (state.lanPlayerId || 'p1'));
+  const row = {
+    t: Math.round(nowMs), screen: state.screen, camFps: state.camFps, poseMs: Math.round(state.poseMs), lagMs: Math.round(state.poseLatMs),
+    poses: (state.syntheticPoses || state.latestPoses || []).length, delegate: state.poseDelegate || '',
+    ...d, outSteer: inp.steer, outLabel: inp.poseLabel,
+    kartSteer: k ? k.steerAngle : '', kartSpeed: k ? k.speed : '', kartX: k ? k.x : '', kartZ: k ? k.z : '',
+  };
+  camLog.push(row);
+  if (camLog.length > 20000) camLog.shift();
+  camLogLast = row;
+}
+function downloadCamLog() {
+  if (!camLog.length) return;
+  const cols = [...new Set(camLog.flatMap((r) => Object.keys(r)))];
+  const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? v : +v.toFixed(4)) : (v ?? ''));
+  const csv = [cols.join(','), ...camLog.map((r) => cols.map((c) => fmt(r[c])).join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `kart-camlog-${Date.now()}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+if (isDebug) {
+  window.__camlog = camLog;
+  window.__downloadCamLog = downloadCamLog;
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyL' && !e.repeat) downloadCamLog(); });
+}
 const debugPanelEl = document.getElementById('debug-panel');
 if (isDebug) debugPanelEl.classList.remove('hidden');
 
@@ -1395,6 +1431,7 @@ function animate(nowMs) {
     ? motionCtrl.update(activePoses, nowMs, playerCount)
     : [];
 
+  if (isDebug && (state.webcamEnabled || state.syntheticPoses)) recordCamLog(nowMs, motionInputs);
   syncCameraUi();
   drawPipOverlay(motionInputs);
 
@@ -1475,7 +1512,8 @@ function animate(nowMs) {
       }
     } catch (_) { /* debug only */ }
     debugPanelEl.textContent =
-      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | AI: ${state.poseDelegate || '-'} ${state.poseW}px | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})${steerTxt}`;
+      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | AI: ${state.poseDelegate || '-'} ${state.poseW}px | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})${steerTxt}` +
+      (camLogLast ? `\nHands: raw ${fmtN(camLogLast.rawAngle)}° med ${fmtN(camLogLast.median)}° neutral ${fmtN(camLogLast.neutral)}° | span ${fmtN(camLogLast.span, 2)}/${fmtN(camLogLast.spanRef, 2)} ${camLogLast.trusted === 0 ? 'REJECTED' : camLogLast.zone === 0 ? 'OUT-OF-ZONE' : camLogLast.pose === 0 ? 'NO-POSE' : 'ok'} | steer ${fmtN(camLogLast.steer, 2)} | log ${camLog.length} rows (press L = download)` : '');
   }
 }
 
