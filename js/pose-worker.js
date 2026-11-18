@@ -34,7 +34,9 @@ const plain = (people) => (people || []).map((pts) => pts.map((q) => ({
   visibility: q.visibility,
 })));
 
-async function createLandmarker(numPoses = 2) {
+let usedDelegate = '';
+
+async function createLandmarker(numPoses = 2, delegates = ['GPU', 'CPU']) {
   let vision;
   try {
     vision = await FilesetResolver.forVisionTasks(`${LOCAL_BASE}/wasm`);
@@ -52,9 +54,11 @@ async function createLandmarker(numPoses = 2) {
   });
 
   for (const modelPath of [`${LOCAL_BASE}/pose_landmarker_lite.task`, MODEL_CDN]) {
-    for (const delegate of ['GPU', 'CPU']) {
+    for (const delegate of delegates) {
       try {
-        return await tryCreate(modelPath, delegate);
+        const lm = await tryCreate(modelPath, delegate);
+        usedDelegate = delegate;
+        return lm;
       } catch (_) {}
     }
   }
@@ -65,8 +69,8 @@ self.onmessage = async (e) => {
   const d = e.data;
   if (d.type === 'init') {
     try {
-      landmarker = await createLandmarker(d.numPoses || 2);
-      self.postMessage({ type: 'ready' });
+      landmarker = await createLandmarker(d.numPoses || 2, d.delegates && d.delegates.length ? d.delegates : ['GPU', 'CPU']);
+      self.postMessage({ type: 'ready', delegate: usedDelegate });
     } catch (err) {
       self.postMessage({ type: 'error', message: String((err && err.message) || err) });
     }

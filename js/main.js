@@ -38,6 +38,9 @@ const state = {
   poseMs: 0,
   camFps: 0,
   poseLatMs: 0,
+  poseDelegate: '',
+  poseW: 480,
+  poseH: 360,
   fps: 60,
   sim: null,
   lastSnapshot: null,
@@ -544,7 +547,7 @@ let workerBusy = false;
 let lastVideoTime = -1;
 let cameraStartPromise = null;
 
-function initPoseWorker() {
+function initPoseWorker(delegates = ['GPU', 'CPU']) {
   return new Promise((resolve, reject) => {
     let w;
     try {
@@ -569,6 +572,7 @@ function initPoseWorker() {
       if (d.type === 'ready') {
         clearTimeout(timer);
         w.onerror = null;
+        state.poseDelegate = d.delegate || '';
         resolve(w);
       } else if (d.type === 'error') {
         clearTimeout(timer);
@@ -578,13 +582,14 @@ function initPoseWorker() {
         workerBusy = false;
         state.poseMs = d.poseMs || 0;
         if (d.frameTs) state.poseLatMs = performance.now() - d.frameTs;
+        watchPoseSpeed(state.poseMs);
         state.latestPoses = (d.landmarks || []).map((lm, idx) => ({
           landmarks: lm,
           worldLandmarks: d.worldLandmarks ? d.worldLandmarks[idx] : null,
         }));
       }
     };
-    w.postMessage({ type: 'init', numPoses: state.mode === '2p' ? 2 : 1 });
+    w.postMessage({ type: 'init', numPoses: state.mode === '2p' ? 2 : 1, delegates });
   });
 }
 
@@ -605,6 +610,42 @@ async function initMainThreadLandmarker() {
     } catch (_) {}
   }
   throw new Error('Main-thread PoseLandmarker failed');
+}
+
+// Slow-model guard. Some laptops run the pose model far slower than the game needs (measured 757 ms per
+// frame, 3 s camera lag, on a shared integrated GPU). After 6 slow results in a row, step down: first
+// to the CPU delegate (remembered on this device), then to a smaller input picture.
+const poseRecent = [];
+let poseStepping = false;
+const POSE_SLOW_MS = 90;
+function watchPoseSpeed(ms) {
+  if (poseStepping || !ms) return;
+  poseRecent.push(ms);
+  if (poseRecent.length > 6) poseRecent.shift();
+  if (poseRecent.length < 6 || poseRecent.some((x) => x < POSE_SLOW_MS)) return;
+  poseRecent.length = 0;
+  poseStepping = true;
+  (async () => {
+    try {
+      if (state.poseDelegate === 'GPU' && poseWorker) {
+        try { localStorage.setItem('kart.poseDelegate', 'CPU'); } catch (_) {}
+        pipStatusEl.textContent = '⏳ Switching pose AI to CPU...';
+        const old = poseWorker;
+        poseWorker = null;
+        workerBusy = false;
+        try { old.terminate(); } catch (_) {}
+        poseWorker = await initPoseWorker(['CPU']);
+        pipStatusEl.textContent = state.webcamReady ? '📷 Motion Active' : pipStatusEl.textContent;
+      } else if (state.poseW > 256) {
+        state.poseW = 320; state.poseH = 240;
+        if (state.poseDelegate === 'CPU' && ms > 160) { state.poseW = 256; state.poseH = 192; }
+      }
+    } catch (_) {
+      /* keep running with whatever is still alive */
+    } finally {
+      poseStepping = false;
+    }
+  })();
 }
 
 // Detect one person unless a 2-player race needs two (cheaper per frame, measured ~30 % on GPU).
@@ -633,7 +674,11 @@ async function startWebcamAndWorker() {
 
       pipStatusEl.textContent = '⏳ Loading Pose AI...';
       try {
-        poseWorker = await initPoseWorker();
+        {
+          // CPU by default: on shared integrated GPUs the GPU delegate fights the renderer (measured 757 ms per
+          // frame and 3 s camera lag on the owner's laptop, versus ~30 ms on CPU).
+          poseWorker = await initPoseWorker(['CPU', 'GPU']);
+        }
         state.webcamReady = true;
         pipStatusEl.textContent = '📷 Motion Active';
       } catch (workerErr) {
@@ -658,7 +703,7 @@ async function startWebcamAndWorker() {
           if (poseWorker) {
             if (!workerBusy) {
               workerBusy = true;
-              createImageBitmap(videoEl, { resizeWidth: 480, resizeHeight: 360 })
+              createImageBitmap(videoEl, { resizeWidth: state.poseW, resizeHeight: state.poseH })
                 .then((bmp) => poseWorker.postMessage({ type: 'frame', bitmap: bmp, ts: performance.now() }, [bmp]))
                 .catch(() => { workerBusy = false; });
             }
@@ -1308,6 +1353,7 @@ function animate(nowMs) {
   }
   lastFrameMs = nowMs;
   const dt = Math.min(0.05, Math.max(0.001, rawDt));
+  const wallDt = Math.min(0.5, Math.max(0.001, rawDt));
   frameDt = dt;
 
   // Displayed FPS: frames per second over the last half second (true rate, no 1/dt averaging).
@@ -1359,7 +1405,7 @@ function animate(nowMs) {
         drawMinimap(snap);
       }
     } else if (state.sim) {
-      const snap = state.paused ? (state.lastSnapshot || state.sim.getSnapshot()) : state.sim.step(dt, { p1: p1In, p2: p2In });
+      const snap = state.paused ? (state.lastSnapshot || state.sim.getSnapshot()) : state.sim.step(state.sim.status === 'countdown' ? wallDt : dt, { p1: p1In, p2: p2In });
       state.lastSnapshot = snap;
       if (!state.paused) handleSimulationEvents(snap.events, snap.totalLaps);
 
@@ -1396,7 +1442,7 @@ function animate(nowMs) {
 
   if (isDebug) {
     debugPanelEl.textContent =
-      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})`;
+      `FPS: ${state.fps} | Cam: ${state.camFps}fps | Pose: ${state.poseMs.toFixed(1)}ms | Lag: ${Math.round(state.poseLatMs)}ms | AI: ${state.poseDelegate || '-'} ${state.poseW}px | Pixels: ${(renderer.pixelCount / 1e6).toFixed(2)}M | Mode: ${state.mode.toUpperCase()} (${state.screen})`;
   }
 }
 
@@ -1424,6 +1470,8 @@ window.__game = {
     poseMs: state.poseMs,
     camFps: state.camFps,
     poseLatMs: state.poseLatMs,
+    poseDelegate: state.poseDelegate,
+    poseW: state.poseW,
     pixelCount: renderer.pixelCount,
     maxPixelBudget: 2_200_000,
     adaptiveScale: renderer.adaptiveScale,

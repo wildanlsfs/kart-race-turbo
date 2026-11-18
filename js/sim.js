@@ -332,8 +332,10 @@ export class RaceSimulation {
     this.events.length = 0;
 
     if (this.status === 'countdown') {
+      // The countdown follows real time: a slow frame (busy laptop, camera AI) must not stretch "3, 2, 1".
+      const cdDt = clamp(dtSec, 0.001, 0.5);
       const prevFloor = Math.ceil(this.countdown);
-      this.countdown -= dt;
+      this.countdown -= cdDt;
       const nextFloor = Math.ceil(this.countdown);
       if (nextFloor !== prevFloor && nextFloor >= 0) {
         this.events.push({ type: 'countdown', count: nextFloor });
