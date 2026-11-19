@@ -47,7 +47,6 @@
     <canvas id="webcam-overlay" width="240" height="180"></canvas>
     <div class="pip-footer">
       <span id="pip-status">📷 Camera Off</span>
-      <button id="btn-recalibrate" class="pip-mini-btn" type="button">Calibrate</button>
     </div>
   </div>
 
@@ -148,10 +147,10 @@
         </button>
       </div>
       <ul class="moves-strip">
-        <li><i>🙌</i><b>Steer</b><span>Tilt wheel / lean</span></li>
+        <li><i>🙌</i><b>Steer</b><span>Turn the wheel</span></li>
         <li><i>🙇</i><b>Brake</b><span>Pull hands / crouch</span></li>
-        <li><i>🚀</i><b>Turbo</b><span>Both hands up!</span></li>
-        <li><i>👊</i><b>Attack</b><span>Punch forward!</span></li>
+        <li><i>🚀</i><b>NOS</b><span>Right hand on button</span></li>
+        <li><i>💥</i><b>Fire</b><span>Left hand on button</span></li>
       </ul>
     </section>
 
@@ -252,9 +251,9 @@
   <!-- Webcam Calibration Modal -->
   <section id="calib-modal" class="overlay-modal hidden" aria-labelledby="calib-title">
     <div class="cream-card compact-card">
-      <h2 id="calib-title">📷 Motion Calibration</h2>
+      <h2 id="calib-title">📷 Get Into Position</h2>
       <p id="calib-desc" class="card-lead">
-        Stand or sit so your shoulders and hands are visible, then hold an invisible steering wheel!
+        Match the frame, then hold an invisible steering wheel. Right hand on NOS to boost, left hand on FIRE.
       </p>
       <div class="calib-stage" id="calib-stage">
         <canvas id="calib-canvas" width="640" height="480" aria-label="Camera preview with the ideal position frame"></canvas>
@@ -267,7 +266,7 @@
       <div class="modal-actions">
         <button id="btn-start-cam" class="btn-3d orange-btn" type="button">
           <span class="btn-ico">📷</span>
-          <span class="btn-txt"><strong>Enable Camera & Calibrate (3s)</strong></span>
+          <span class="btn-txt"><strong>Enable Camera</strong></span>
         </button>
         <button id="btn-skip-cam" class="btn-soft" type="button">
           ⌨️ Play Without Camera (Keyboard / Touch)
@@ -300,7 +299,7 @@
             <span class="btn-ico">🏁</span>
             <span class="btn-txt"><strong>Start LAN Race Now!</strong></span>
           </button>
-          <button id="btn-lan-camera" class="btn-soft" type="button">📷 Calibrate My Webcam</button>
+          <button id="btn-lan-camera" class="btn-soft" type="button">📷 Set Up My Webcam</button>
           <button id="btn-lan-leave" class="btn-soft danger-soft" type="button">Leave Room</button>
         </div>
       </div>

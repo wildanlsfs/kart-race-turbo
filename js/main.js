@@ -761,6 +761,35 @@ function syncCameraUi() {
   document.body.classList.toggle('cam-on', on);
 }
 
+// The imaginary controls the game is reading: the wheel (green while gripped, grey when let go) turning with the
+// hands, and the NOS / FIRE buttons (lit while pressed). hud is in image space; the preview is mirrored.
+function drawControls(c, w, h, hud) {
+  if (!hud) return;
+  const X = (x) => (1 - x) * w, Y = (y) => y * h, u = w;
+  const wh = hud.wheel;
+  c.save();
+  c.translate(X(wh.x), Y(wh.y));
+  c.rotate(((wh.deg || 0) * Math.PI) / 180);
+  const R = Math.max(u * 0.03, wh.r * u);
+  c.lineWidth = Math.max(2, u * 0.012); c.strokeStyle = wh.held ? '#3fbf6a' : 'rgba(255,255,255,0.55)';
+  c.setLineDash(wh.held ? [] : [6, 6]);
+  c.beginPath(); c.arc(0, 0, R, 0, Math.PI * 2); c.stroke();
+  c.beginPath(); c.moveTo(-R, 0); c.lineTo(R, 0); c.moveTo(0, 0); c.lineTo(0, R); c.stroke();
+  c.fillStyle = wh.held ? '#3fbf6a' : 'rgba(255,255,255,0.55)';
+  c.beginPath(); c.arc(0, -R, Math.max(2, u * 0.012), 0, Math.PI * 2); c.fill(); // 12 o'clock mark: shows the turn
+  c.restore();
+  for (const [b, label, col] of [[hud.nos, 'NOS', '#ff7a3c'], [hud.fire, 'FIRE', '#e04a5a']]) {
+    const r = Math.max(u * 0.035, b.r * u);
+    c.save();
+    c.globalAlpha = b.down ? 1 : (b.hover ? 0.85 : 0.6);
+    c.fillStyle = b.down ? col : 'rgba(20,28,48,0.55)'; c.strokeStyle = col; c.lineWidth = Math.max(2, u * 0.008);
+    c.beginPath(); c.arc(X(b.x), Y(b.y), r, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.fillStyle = '#fff'; c.font = `700 ${Math.max(9, Math.round(r * 0.55))}px system-ui, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(label, X(b.x), Y(b.y));
+    c.restore();
+  }
+}
+
 function drawPipOverlay(motionInputs) {
   if (!document.body.classList.contains('cam-on')) return;
   const w = pipCanvas.width;
@@ -840,6 +869,8 @@ function drawPipOverlay(motionInputs) {
       pipCtx.stroke();
     }
   }
+
+  for (const sl of (state.mode === '2p' ? [0, 1] : [0])) drawControls(pipCtx, w, h, motionCtrl.slots[sl].hud);
 
   const inp = motionInputs[0];
   if (inp) {
@@ -971,6 +1002,7 @@ function drawCalibStage(nowMs) {
     for (const i of [11, 12, 15, 16]) { if (!lm[i]) continue; c.beginPath(); c.arc((1 - lm[i].x) * w, Math.min(h, lm[i].y * h), w * 0.011, 0, Math.PI * 2); c.fill(); }
     c.restore();
   }
+  for (const sl of slots) drawControls(c, w, h, motionCtrl.slots[sl].hud);
   calibCanvas.classList.toggle('good', okAll);
   const tips = okAll ? [{ text: n === 2 ? 'Both players are in position' : 'Perfect position', good: true }] : framingResult.issues;
   const key = tips.map((t) => t.text).join('|') + (okAll ? '1' : '0');
@@ -1018,8 +1050,8 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
       return;
     }
 
-    // Hold the countdown until everyone needed is framed well (tips are on the preview). Never block for good:
-    // after 12 s of trying it goes ahead with what it sees, so a hard room cannot lock a player out.
+    // No calibration to hold: straight is 0 degrees against the player's own shoulders. Just wait until everyone
+    // needed is in the frame (tips are on the preview), then go. Never block for good: after 12 s it goes ahead.
     if (!framingResult.ok && (badFrameSec += 0.2) < 12) {
       heldSec = 0; lastBeepSec = 4;
       calibTimerEl.textContent = 'Get into the frame';
@@ -1027,19 +1059,16 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
       return;
     }
     heldSec += 0.2;
-    const rem = Math.max(0, Math.ceil(2.4 - heldSec));
-    calibHintEl.textContent = 'Awesome, camera sees you! Hold your neutral center posture... 👍';
-    if (rem > 0) {
-      calibTimerEl.textContent = `${rem}...`;
-      if (rem !== lastBeepSec) {
-        lastBeepSec = rem;
-        sfx.countdown(rem);
-      }
+    calibHintEl.textContent = state.mode === '2p'
+      ? 'Great! Hold the wheel with both hands. Right hand on NOS, left hand on FIRE.'
+      : 'Great! Hold the wheel with both hands. Right hand on NOS, left hand on FIRE.';
+    if (heldSec < 1.0) {
+      calibTimerEl.textContent = 'Perfect position 👍';
     } else {
       stopCalibLoop();
-      motionCtrl.calibrate(poses, state.mode === '2p' ? 2 : 1);
-      calibTimerEl.textContent = 'Calibrated! 🏁';
-      pipStatusEl.textContent = '📷 Calibrated & Active';
+      motionCtrl.calibrate(poses, state.mode === '2p' ? 2 : 1); // silent: only seeds the body-centre fallback and the crouch height
+      calibTimerEl.textContent = 'Ready! 🏁';
+      pipStatusEl.textContent = '📷 Active';
       sfx.countdown(0);
       if (pendingAfterCalib) pendingAfterCalib();
     }
@@ -1049,20 +1078,6 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
 document.getElementById('btn-skip-cam').addEventListener('click', () => {
   stopCalibLoop();
   if (pendingAfterCalib) pendingAfterCalib();
-});
-
-document.getElementById('btn-recalibrate').addEventListener('click', async () => {
-  if (!state.webcamEnabled) {
-    await startWebcamAndWorker();
-  }
-  const poses = state.syntheticPoses || state.latestPoses;
-  if (poses.length > 0) {
-    motionCtrl.calibrate(poses, state.mode === '2p' ? 2 : 1);
-    pipStatusEl.textContent = '📷 Center Locked! 👍';
-    sfx.countdown(0);
-  } else {
-    pipStatusEl.textContent = '👀 Step in front of cam';
-  }
 });
 
 // Start Local Race (1P or 2P Split-Screen)

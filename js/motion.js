@@ -1,3 +1,4 @@
+import { BTN_HOLD_MS, WHEEL_DEFAULT, wheelButtons } from './wheelgeom.js';
 // One-Euro Filter + Webcam Pose-to-Kart Motion Controller
 // Works with laptop webcams where only upper body (head, shoulders, hands) is visible,
 // as well as full-body standing play, for both 1-Player and 2-Player Split-Screen.
@@ -72,6 +73,9 @@ function createSlotState() {
     spanBad: 0,
     lastWheelTilt: 0,
     slewRaw: null,
+    shDeg: null, // slow estimate of the shoulder-line angle (camera tilt); 0 deg of the wheel is measured against it
+    wheelC: { ...WHEEL_DEFAULT }, // wheel centre/radius in shoulder-widths, learned from the grip
+    mode: 0, badMs: 0, nosMs: 0, fireMs: 0, fireHeld: false, hud: null,
     shoulderWidth: 0.18,
     lastSeenMs: -9999,
     lastSteer: 0,
@@ -104,6 +108,8 @@ export function makeSyntheticPose({
   rightPunch = false,
   leftPunch = false,
   handsDown = false,
+  nosPress = false, // player's right hand on the NOS button
+  firePress = false, // player's left hand on the FIRE button
 } = {}) {
   const lm = Array.from({ length: 33 }, () => ({ x: centerX, y: 0.5, z: 0, visibility: 0.99 }));
   const world = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0, visibility: 0.99 }));
@@ -151,6 +157,11 @@ export function makeSyntheticPose({
     rwY = shMidY + shoulderWidth * 0.12;
   }
 
+  if (nosPress || firePress) {
+    const b = wheelButtons(shMidX, shMidY, shoulderWidth);
+    if (nosPress) { rwX = b.nos.x; rwY = b.nos.y; }
+    if (firePress) { lwX = b.fire.x; lwY = b.fire.y; }
+  }
   lm[15] = { x: lwX, y: lwY, z: lwZ, visibility: 0.99 };
   lm[16] = { x: rwX, y: rwY, z: rwZ, visibility: 0.99 };
 
@@ -239,7 +250,7 @@ export class MotionController {
       slot.neutralWheelDeg = clamp(a0, -10, 10);
     }
     slot.steerFilter.reset();
-    slot.rawHist = []; slot.lastRawM = null; slot.spanRef = null; slot.spanBad = 0; slot.lastWheelTilt = 0; slot.slewRaw = null;
+    slot.rawHist = []; slot.lastRawM = null; slot.spanRef = null; slot.spanBad = 0; slot.lastWheelTilt = 0; slot.slewRaw = null; slot.shDeg = null; slot.mode = 0; slot.badMs = 0; slot.wheelC = { ...WHEEL_DEFAULT };
     slot.yFilter.reset();
     slot.brakeStartMs = null;
   }
@@ -307,7 +318,7 @@ export class MotionController {
   _evalSlot(slot, pose, nowMs) {
     const tSec = nowMs / 1000;
     if (!pose) {
-      slot.dbg = { pose: 0 };
+      slot.dbg = { pose: 0 }; slot.hud = null; slot.nosMs = 0; slot.fireMs = 0;
       const alive = (nowMs - slot.lastSeenMs) <= this.dropoutMs;
       return {
         throttle: alive ? slot.lastThrottle : 0,
@@ -339,56 +350,50 @@ export class MotionController {
     const rh = lm[24];
     const nose = lm[0];
 
-    const wristVis = (w) => w && (w.visibility === undefined || w.visibility > 0.35);
+    // Wrists must be seen AND inside the picture: a wrist the model places below the frame keeps a high visibility
+    // score while its position is a guess (log: it jumped a full shoulder-width in one frame).
+    const inFrame = (w) => w.x > 0.02 && w.x < 0.98 && w.y > 0.02 && w.y < 0.98;
+    const wristVis = (w) => w && (w.visibility === undefined || w.visibility > 0.35) && inFrame(w);
     const lwOk = wristVis(lw);
     const rwOk = wristVis(rw);
+    const dtAdapt = Math.min(0.1, Math.max(0.001, slot.lastEvalSec == null ? 0.033 : tSec - slot.lastEvalSec));
 
-    // 1. PUNCH / ATTACK detection (3D depth OR fast 2D wrist jab away from shoulder)
+    // Body lean (fallback only, used when both wrists are lost): shoulder shift against the calibrated centre + head + shoulder tilt.
+    if (Math.abs(slot.lastSteer) < 0.05 && Math.abs(slot.neutralX - shMidX) < sw * 0.10) {
+      const k = Math.min(1, 0.25 * dtAdapt);
+      slot.neutralX += (shMidX - slot.neutralX) * k;
+      if (nose) slot.neutralNoseX = (slot.neutralNoseX ?? slot.neutralX) + (nose.x - (slot.neutralNoseX ?? slot.neutralX)) * k;
+    }
+    const shoulderShiftRight = clamp((slot.neutralX - shMidX) / (sw * 0.36), -1, 1);
+    const headShiftRight = nose ? clamp(((slot.neutralNoseX ?? slot.neutralX) - nose.x) / (sw * 0.40), -1, 1) : shoulderShiftRight;
+    const hipMidX = (lh && rh) ? (lh.x + rh.x) * 0.5 : shMidX;
+    const torsoLeanRight = clamp((hipMidX - shMidX) / (sw * 0.34), -1, 1);
+    const shoulderTiltRight = clamp((rs.y - ls.y) / (sw * 0.28), -1, 1);
+    const upperLean = Math.abs(shoulderShiftRight) >= Math.abs(torsoLeanRight) ? shoulderShiftRight : torsoLeanRight;
+    const bodyLeanRight = clamp(upperLean * 0.62 + headShiftRight * 0.25 + shoulderTiltRight * 0.25, -1, 1);
+
+    // 1. IMAGINARY BUTTONS: NOS (player's right) and FIRE (player's left). A hand that stays on a button for
+    // BTN_HOLD_MS presses it; the other hand keeps steering. NOS is held; FIRE fires once per press.
+    const btn = wheelButtons(shMidX, shMidY, sw);
+    const onBtn = (w, b) => Math.hypot(w.x - b.x, w.y - b.y) < b.r;
+    const rOnNos = rwOk && onBtn(rw, btn.nos);
+    const lOnFire = lwOk && onBtn(lw, btn.fire);
+    slot.nosMs = rOnNos ? slot.nosMs + dtAdapt * 1000 : 0;
+    slot.fireMs = lOnFire ? slot.fireMs + dtAdapt * 1000 : 0;
+    const turbo = slot.nosMs >= BTN_HOLD_MS;
+    const fireDown = slot.fireMs >= BTN_HOLD_MS;
     let attack = false;
-    const leftDepth = lwOk ? (ls.z - lw.z) : 0;
-    const rightDepth = rwOk ? (rs.z - rw.z) : 0;
-    const leftChestLevel = lwOk && Math.abs(lw.y - shMidY) < sw * 0.75;
-    const rightChestLevel = rwOk && Math.abs(rw.y - shMidY) < sw * 0.75;
-
-    let fast2DJab = false;
-    if (lwOk && slot.prevLeftWrist) {
-      const v2d = Math.hypot(lw.x - slot.prevLeftWrist.x, lw.y - slot.prevLeftWrist.y) / sw;
-      if (leftChestLevel && v2d > 0.55) fast2DJab = true;
-    }
-    if (rwOk && slot.prevRightWrist) {
-      const v2d = Math.hypot(rw.x - slot.prevRightWrist.x, rw.y - slot.prevRightWrist.y) / sw;
-      if (rightChestLevel && v2d > 0.55) fast2DJab = true;
-    }
-    slot.prevLeftWrist = lwOk ? { x: lw.x, y: lw.y } : null;
-    slot.prevRightWrist = rwOk ? { x: rw.x, y: rw.y } : null;
-
-    const leftJab = leftChestLevel && (leftDepth > 0.25 || (leftDepth - slot.prevLeftReach) > 0.15);
-    const rightJab = rightChestLevel && (rightDepth > 0.25 || (rightDepth - slot.prevRightReach) > 0.15);
-    slot.prevLeftReach = leftDepth;
-    slot.prevRightReach = rightDepth;
-
-    if ((leftJab || rightJab || fast2DJab) && (nowMs - slot.lastPunchMs > 320)) {
-      attack = true;
-      slot.lastPunchMs = nowMs;
-    }
-
-    // 2. TURBO / HOP detection: Both hands raised above shoulders/nose OR real jump (shoulders rise)
-    const noseY = nose ? nose.y : shMidY - sw * 0.6;
-    const handsOverhead = lwOk && rwOk &&
-      lw.y < (shMidY - sw * 0.35) &&
-      rw.y < (shMidY - sw * 0.35) &&
-      (lw.y < noseY + sw * 0.25 || rw.y < noseY + sw * 0.25);
+    if (fireDown && !slot.fireHeld && nowMs - slot.lastPunchMs > 320) { attack = true; slot.lastPunchMs = nowMs; }
+    slot.fireHeld = fireDown;
     const jumped = (slot.neutralShoulderY - shMidY) > sw * 0.28;
-    const turbo = Boolean(handsOverhead || jumped);
     const hop = Boolean(jumped);
 
-    // 3. BRAKE / REVERSE detection: Crouch (shoulders drop) OR both hands pulled tight to chest
+    // 2. BRAKE / REVERSE: crouch (shoulders drop) OR both hands pulled tight to the chest
     const crouched = (shMidY - slot.neutralShoulderY) > sw * 0.32;
     const wristsDistance = (lwOk && rwOk) ? Math.hypot(lw.x - rw.x, lw.y - rw.y) : sw;
-    const handsPulledChest = !attack && !handsOverhead && lwOk && rwOk &&
+    const handsPulledChest = !turbo && !attack && lwOk && rwOk &&
       wristsDistance < sw * 0.42 &&
       Math.abs(((lw.y + rw.y) * 0.5) - (shMidY + sw * 0.18)) < sw * 0.36;
-
     const brake = Boolean(!attack && !turbo && (crouched || handsPulledChest));
     if (brake) {
       if (slot.brakeStartMs === null) slot.brakeStartMs = nowMs;
@@ -397,108 +402,100 @@ export class MotionController {
     }
     const reverse = Boolean(brake && slot.brakeStartMs !== null && (nowMs - slot.brakeStartMs >= 380));
 
-    // 4. STEERING (Mirrored camera):
-    // Balanced for comfortable webcam play with 12% deadzone, S-curve response, and adaptive neutral center
-    // Only drift the neutral point while the player is clearly NOT steering (previous steer ~0),
-    // and slowly, so holding a lean through a long corner does not fade the steering away.
-    const dtAdapt = Math.min(0.1, Math.max(0.001, slot.lastEvalSec == null ? 0.033 : tSec - slot.lastEvalSec));
-    if (!attack && !crouched && Math.abs(slot.lastSteer) < 0.05 && Math.abs(slot.neutralX - shMidX) < sw * 0.10) {
-      const k = Math.min(1, 0.25 * dtAdapt);
-      slot.neutralX += (shMidX - slot.neutralX) * k;
-      if (nose) {
-        slot.neutralNoseX = (slot.neutralNoseX ?? slot.neutralX) + (nose.x - (slot.neutralNoseX ?? slot.neutralX)) * k;
-      }
-    }
+    // 3. STEERING. Straight ahead is 0 degrees measured against the player's own shoulder line (so a tilted laptop
+    // never matters and there is nothing to calibrate). The wheel is read from the hands that are gripping it:
+    //   two hands  -> angle of the line between them;
+    //   one hand   -> angle of that hand around the wheel centre remembered from when both were on it
+    //                 (the other hand is pressing NOS/FIRE, or was lost);
+    //   no hands   -> the wheel is let go: it returns to 0.
+    const inZone = (w) => w.y > shMidY - sw * 0.6 && w.y < shMidY + sw * 2.2;
+    const lGrip = lwOk && !lOnFire && inZone(lw);
+    const rGrip = rwOk && !rOnNos && inZone(rw);
+    const mode = lGrip && rGrip ? 2 : (lGrip || rGrip ? 1 : 0);
+    const shDegNow = clamp(handLineDeg(ls, rs, sw), -15, 15);
+    slot.shDeg = slot.shDeg === null ? shDegNow : slot.shDeg + (shDegNow - slot.shDeg) * Math.min(1, 0.7 * dtAdapt); // slow: a camera tilt, not a lean
     slot.lastEvalSec = tSec;
-
-    // (a) Upper-body displacement relative to calibrated neutralX
-    const shoulderShiftRight = clamp((slot.neutralX - shMidX) / (sw * 0.36), -1, 1);
-
-    // (b) Head shift relative to calibrated neutralNoseX
-    const headShiftRight = nose
-      ? clamp(((slot.neutralNoseX ?? slot.neutralX) - nose.x) / (sw * 0.40), -1, 1)
-      : shoulderShiftRight;
-
-    // (c) Torso lean relative to hips (if hips are visible and didn't just move identically with shoulders)
-    const hipMidX = (lh && rh) ? (lh.x + rh.x) * 0.5 : shMidX;
-    const torsoLeanRight = clamp((hipMidX - shMidX) / (sw * 0.34), -1, 1);
-
-    // (d) Shoulder tilt angle (leaning right tilts right shoulder down -> larger y than left shoulder)
-    const shoulderTiltRight = clamp((rs.y - ls.y) / (sw * 0.28), -1, 1);
-
-    const upperLean = Math.abs(shoulderShiftRight) >= Math.abs(torsoLeanRight)
-      ? shoulderShiftRight
-      : torsoLeanRight;
-    const bodyLeanRight = clamp(upperLean * 0.62 + headShiftRight * 0.25 + shoulderTiltRight * 0.25, -1, 1);
-
-    // (e) Invisible steering wheel: the angle the hands' line has turned from where it was at
-    // calibration is the wheel angle, 1:1, clamped to +-WHEEL_MAX_DEG. The hands may sit anywhere from
-    // above the chest down to the belly: turning the wheel moves one hand up and the other down.
+    const wc = slot.wheelC;
+    const cx = shMidX + wc.dx * sw, cy = shMidY + wc.dy * sw, cr = wc.r * sw;
+    const wheelVis = (w) => w.visibility === undefined || w.visibility > 0.5;
     let wheelTiltRight = 0;
-    const handsInWheelZone = lwOk && rwOk && !handsOverhead && !attack &&
-      lw.y > shMidY - sw * 0.6 && lw.y < shMidY + sw * 2.2 &&
-      rw.y > shMidY - sw * 0.6 && rw.y < shMidY + sw * 2.2;
-
-    dbg.zone = handsInWheelZone ? 1 : 0; dbg.lwOk = lwOk ? 1 : 0; dbg.rwOk = rwOk ? 1 : 0;
-    dbg.lwx = lw.x; dbg.lwy = lw.y; dbg.lwv = lw.visibility; dbg.rwx = rw.x; dbg.rwy = rw.y; dbg.rwv = rw.visibility;
-    dbg.sw = sw; dbg.shY = shMidY; dbg.attack = attack ? 1 : 0; dbg.overhead = handsOverhead ? 1 : 0;
-    if (handsInWheelZone) {
-      const wheelVis = (w) => w.visibility === undefined || w.visibility > 0.5;
+    let holding = false;
+    let rawNow = null;
+    let trusted = false;
+    if (mode !== slot.mode) { slot.rawHist = []; slot.lastRawM = null; slot.spanRef = null; slot.spanBad = 0; slot.badMs = 0; slot.mode = mode; }
+    if (mode === 2) {
       const span = Math.hypot(rw.x - lw.x, rw.y - lw.y);
       if (slot.spanRef === null) slot.spanRef = span;
-      // Hands on a rigid wheel keep the same distance whatever the angle. A frame where the distance jumps, or a
-      // wrist is only faintly detected, is a landmark glitch (measured: one wrist off by 0.25 for 3 frames gave a
-      // 33 deg wheel jump and a sudden turn off the road): hold the last good reading instead of steering on it.
+      // Hands on a rigid wheel keep the same distance whatever the angle; a frame where it jumps is a landmark glitch.
       const spanOk = Math.abs(span - slot.spanRef) <= 0.12 * slot.spanRef;
-      const trusted = wheelVis(lw) && wheelVis(rw) && spanOk;
+      trusted = wheelVis(lw) && wheelVis(rw) && spanOk;
       if (spanOk) { slot.spanRef += (span - slot.spanRef) * 0.05; slot.spanBad = 0; }
-      else if (++slot.spanBad > 15) { slot.spanRef = span; slot.spanBad = 0; } // grip really changed (0.5 s): re-learn it
-      dbg.span = span; dbg.spanRef = slot.spanRef; dbg.spanOk = spanOk ? 1 : 0; dbg.trusted = trusted ? 1 : 0;
-      dbg.rawAngle = handLineDeg(lw, rw, sw);
+      else if (++slot.spanBad > 15) { slot.spanRef = span; slot.spanBad = 0; } // the grip really changed (0.5 s): re-learn it
       if (trusted) {
-        slot.rawHist.push(handLineDeg(lw, rw, sw));
+        rawNow = handLineDeg(lw, rw, sw);
+        const k = 0.08; // wheel centre and radius follow the grip, relative to the body
+        wc.dx += (((lw.x + rw.x) / 2 - shMidX) / sw - wc.dx) * k;
+        wc.dy += (((lw.y + rw.y) / 2 - shMidY) / sw - wc.dy) * k;
+        wc.r += ((span / 2) / sw - wc.r) * k;
+      }
+      dbg.span = span; dbg.spanRef = slot.spanRef; dbg.spanOk = spanOk ? 1 : 0;
+    } else if (mode === 1) {
+      const w = lGrip ? lw : rw;
+      const d = Math.hypot(w.x - cx, w.y - cy);
+      trusted = wheelVis(w) && d > 0.5 * cr && d < 1.8 * cr;
+      if (trusted) {
+        rawNow = lGrip
+          ? (Math.atan2(cy - lw.y, lw.x - cx) * 180) / Math.PI
+          : (Math.atan2(rw.y - cy, cx - rw.x) * 180) / Math.PI;
+      }
+    }
+    if (mode > 0) {
+      slot.badMs = trusted ? 0 : slot.badMs + dtAdapt * 1000;
+      if (trusted && rawNow !== null) {
+        slot.rawHist.push(rawNow);
         if (slot.rawHist.length > 5) slot.rawHist.shift();
         const sorted = [...slot.rawHist].sort((x, y) => x - y);
         slot.lastRawM = sorted[sorted.length >> 1]; // median: a 1-2 frame outlier never reaches the wheel
       }
-      if (slot.lastRawM !== null) {
-        // Slew limit on the reading itself: a hand can turn a wheel at most ~450 deg/s (a fast flick), anything
-        // beyond that between two frames is a glitch, and it can only move the reading that far per frame.
-        const tSlew = dtAdapt; // seconds since the previous frame (computed before lastEvalSec is overwritten)
-        let raw = slot.lastRawM;
-        if (slot.slewRaw !== null && slot.slewRaw !== undefined) {
-          const maxStep = 450 * tSlew;
-          raw = slot.slewRaw + clamp(raw - slot.slewRaw, -maxStep, maxStep);
-        }
-        slot.slewRaw = raw;
-        if (Math.abs(raw - slot.neutralWheelDeg) < 12) {
-          // The straight-ahead angle follows the hands while they stay within 12 deg of it, so a calibration taken
-          // in another posture (or a slowly sagging wheel) never leaves a permanent pull to one side. Deliberate
-          // turns (more than 12 deg off) never drift away.
-          slot.neutralWheelDeg += (raw - slot.neutralWheelDeg) * Math.min(1, 0.5 * dtAdapt);
-        }
-        wheelTiltRight = clamp((raw - slot.neutralWheelDeg) / WHEEL_MAX_DEG, -1, 1);
-        dbg.median = slot.lastRawM; dbg.slew = raw; dbg.neutral = slot.neutralWheelDeg;
-      }
+    }
+    if (mode > 0 && slot.lastRawM !== null && slot.badMs < 400) {
+      // Slew limit on the reading itself: a hand turns a wheel at most ~450 deg/s; anything faster between two
+      // frames is a glitch and only moves the reading that far per frame.
+      let raw = slot.lastRawM;
+      if (slot.slewRaw !== null) raw = slot.slewRaw + clamp(raw - slot.slewRaw, -450 * dtAdapt, 450 * dtAdapt);
+      slot.slewRaw = raw;
+      wheelTiltRight = clamp((raw - slot.shDeg) / WHEEL_MAX_DEG, -1, 1);
+      holding = true;
+      dbg.median = slot.lastRawM; dbg.slew = raw;
+    } else {
+      // Let go (hands away, or no valid point for 0.4 s): back to straight; re-gripping rises smoothly from 0.
+      slot.slewRaw = slot.shDeg; slot.lastRawM = null; slot.rawHist = [];
     }
     slot.lastWheelTilt = wheelTiltRight;
 
-    // Wheel angle (exact, 1:1) plus body lean (for players who also lean into the bend).
-    const rawSteer = attack
-      ? 0
-      : clamp(bodyLeanRight + wheelTiltRight, -1, 1);
+    // Body lean is only a fallback while both wrists are lost; a small lean never counts (log: a constant +0.14 bias).
+    const handsLost = !lwOk && !rwOk;
+    const leanFb = Math.abs(bodyLeanRight) > 0.2 ? Math.sign(bodyLeanRight) * (Math.abs(bodyLeanRight) - 0.2) / 0.8 : 0;
+    const rawSteer = holding ? wheelTiltRight : (handsLost ? leanFb : 0);
+
+    dbg.zone = holding ? 1 : 0; dbg.lwOk = lwOk ? 1 : 0; dbg.rwOk = rwOk ? 1 : 0;
+    dbg.lwx = lw.x; dbg.lwy = lw.y; dbg.lwv = lw.visibility; dbg.rwx = rw.x; dbg.rwy = rw.y; dbg.rwv = rw.visibility;
+    dbg.sw = sw; dbg.shY = shMidY; dbg.attack = attack ? 1 : 0; dbg.nos = turbo ? 1 : 0; dbg.mode = mode; dbg.trusted = trusted ? 1 : 0;
+    dbg.rawAngle = rawNow; dbg.neutral = slot.shDeg;
 
     const deadzone = 0.067; // ~6 deg of wheel
     const dzSteer = Math.abs(rawSteer) < deadzone
       ? 0
       : Math.sign(rawSteer) * ((Math.abs(rawSteer) - deadzone) / (1 - deadzone));
-    // 1:1 (linear) after the dead zone: the steering wheel angle is exactly what the player's hands show.
-    const curvedSteer = dzSteer;
-
-    const filteredSteer = slot.steerFilter.filter(curvedSteer, tSec);
+    const filteredSteer = slot.steerFilter.filter(dzSteer, tSec);
     const steer = Math.abs(filteredSteer) < 0.01 ? 0 : clamp(filteredSteer, -1, 1);
     slot.wheelAngleDeg = Math.round(steer * WHEEL_MAX_DEG);
     dbg.bodyLean = bodyLeanRight; dbg.wheelTilt = wheelTiltRight; dbg.rawSteer = rawSteer; dbg.steer = steer;
+    slot.hud = {
+      wheel: { x: cx, y: cy, r: cr, deg: slot.wheelAngleDeg, held: holding },
+      nos: { ...btn.nos, down: turbo, hover: rOnNos },
+      fire: { ...btn.fire, down: fireDown, hover: lOnFire },
+    };
 
     // Gently adapt neutralShoulderY when standing upright (like body-runner line 331)
     if (!jumped && !crouched) {
@@ -511,7 +508,7 @@ export class MotionController {
       if (this.autoGas) {
         throttle = 1;
       } else {
-        throttle = (handsInWheelZone || handsOverhead) ? 1 : 0;
+        throttle = (holding || turbo) ? 1 : 0;
       }
     }
 
@@ -519,8 +516,8 @@ export class MotionController {
     slot.lastThrottle = throttle;
 
     let poseLabel = 'DRIVE 🙂';
-    if (attack) poseLabel = 'PUNCH! 💥';
-    else if (turbo) poseLabel = 'TURBO! 🚀';
+    if (attack) poseLabel = 'FIRE! 💥';
+    else if (turbo) poseLabel = 'NOS! 🚀';
     else if (reverse) poseLabel = 'REVERSE ⏪';
     else if (brake) poseLabel = 'BRAKE 🛑';
     else if (steer < -0.20) poseLabel = 'LEFT ⬅️';

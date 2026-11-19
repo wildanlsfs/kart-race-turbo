@@ -31,7 +31,7 @@ export function guideFor(playerCount, slot = 0) {
     head: { x: z.cx, y: shY - sw * 0.75, r: sw * 0.48 },
     leftShoulder: { x: z.cx - sw / 2, y: shY }, rightShoulder: { x: z.cx + sw / 2, y: shY },
     leftHand: { x: z.cx - sw * 0.62, y: shY + sw * 0.9 }, rightHand: { x: z.cx + sw * 0.62, y: shY + sw * 0.9 },
-    box: { x0: z.cx - sw * 1.15, x1: z.cx + sw * 1.15, y0: shY - sw * 1.2, y1: shY + sw * 1.45 },
+    box: { x0: z.cx - sw * 1.5, x1: z.cx + sw * 1.5, y0: shY - sw * 1.2, y1: shY + sw * 1.45 },
   };
 }
 

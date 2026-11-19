@@ -31,11 +31,18 @@ Steering is real turning: nothing drives the kart for you except a short soft ba
 
 | Body Motion | Action | P1 Keyboard | P2 Keyboard |
 |---|---|---|---|
-| **Auto-Drive (or hold hands in wheel zone)** | Accelerate forward | `W` / Auto | `↑` / Auto |
-| **Tilt invisible steering wheel / Lean left or right** | Steering wheel angle, up to 90 degrees each way (the front tyres follow) | `A` / `D` | `←` / `→` |
+| **Auto-Drive (or hold both hands on the wheel)** | Accelerate forward | `W` / Auto | `↑` / Auto |
+| **Turn the invisible steering wheel (hands on it, like driving)** | Steering wheel angle, up to 90 degrees each way (the front tyres follow) | `A` / `D` | `←` / `→` |
 | **Pull both hands to chest / Crouch** | Brake (hold to Reverse) | `S` | `↓` |
-| **Raise both hands overhead (or hop)** | Fire Turbo Boost | `Space` | `Right Shift` |
-| **Punch forward with either hand** | Fire Crate Weapon (Rocket, Bomb, TNT, Shield) | `F` / `E` | `Enter` / `K` |
+| **Right hand on the NOS button (above your right shoulder; or hop)** | Hold for Turbo Boost; the other hand keeps steering | `Space` | `Right Shift` |
+| **Left hand on the FIRE button (above your left shoulder)** | Fire Crate Weapon (Rocket, Bomb, TNT, Shield) | `F` / `E` | `Enter` / `K` |
+
+### How the webcam reads you
+
+- **No calibration.** Straight ahead is 0 degrees measured against your own shoulder line, so a tilted laptop does not matter. Get into the green frame (one frame for solo, two side by side for 2 players), hold the wheel, go.
+- **The wheel is drawn on the camera preview**, green while you grip it and grey when you let go, turning with your hands. NOS and FIRE are two buttons above your shoulders; a hand that stays on one for 0.15 s presses it while the other hand keeps steering (from that one hand, around the wheel centre it remembered).
+- A wrist the camera places outside the picture is ignored, and with no valid hand for 0.4 s the wheel is let go and returns to straight. Body lean only steers if both wrists are lost.
+- `?debug` in the URL shows the camera log; press `L` to download it as CSV.
 
 ### Other keys and touch
 

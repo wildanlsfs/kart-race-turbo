@@ -50,3 +50,16 @@ test('Framing 2P: one player missing names the missing seat; both standing in th
 test('Framing: ideal widths leave room for the hands below the shoulders in both modes', () => {
   for (const n of [1, 2]) { const g = guideFor(n); assert.ok(g.shY + g.sw * 1.7 < 0.98, `mode ${n}`); assert.ok(g.sw >= FRAMING[n].swMin && g.sw <= FRAMING[n].swMax); }
 });
+
+import { wheelButtons } from '../js/wheelgeom.js';
+test('Imaginary buttons: in 2P the neighbours\' NOS and FIRE never touch, and each button stays inside the picture, in both modes', () => {
+  const g1 = guideFor(2, 0), g2 = guideFor(2, 1);
+  const b1 = wheelButtons(1 - g1.cx, g1.shY, g1.sw), b2 = wheelButtons(1 - g2.cx, g2.shY, g2.sw);
+  // image space: P1 is on the image's right (mirrored preview), so the pair that faces each other is P1.nos / P2.fire in display terms
+  const pairs = [[b1.nos, b2.fire], [b1.fire, b2.nos]];
+  for (const [a, b] of pairs) assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > (a.r + b.r) * 1.2, 'neighbouring buttons overlap');
+  for (const [n, slots] of [[1, [0]], [2, [0, 1]]]) for (const s of slots) {
+    const g = guideFor(n, s), b = wheelButtons(1 - g.cx, g.shY, g.sw);
+    for (const k of [b.nos, b.fire]) assert.ok(k.x - k.r > 0 && k.x + k.r < 1 && k.y - k.r > 0 && k.y + k.r < 1, `mode ${n} slot ${s}: button off the picture`);
+  }
+});
