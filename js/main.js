@@ -1022,16 +1022,29 @@ function openCalibration(afterCb) {
   setScreen('calibrate');
 }
 
+let camStarting = false;
+// Hand the calibration screen's "go on" action over exactly once, whatever happens (double click, slow permission prompt).
+function finishCalibration() {
+  stopCalibLoop();
+  const cb = pendingAfterCalib;
+  pendingAfterCalib = null;
+  if (cb) cb();
+}
+
 document.getElementById('btn-start-cam').addEventListener('click', async () => {
+  if (camStarting || calibInterval) return; // already starting or running: a second click must not start a second loop
+  camStarting = true;
   stopCalibLoop();
   calibTimerEl.textContent = 'Loading Camera...';
   calibHintEl.textContent = 'Please allow browser webcam access when prompted.';
-  const ok = await startWebcamAndWorker();
+  let ok = false;
+  try { ok = await startWebcamAndWorker(); } finally { camStarting = false; }
   if (!ok) {
     calibTimerEl.textContent = 'No Camera';
-    if (pendingAfterCalib) pendingAfterCalib();
+    finishCalibration();
     return;
   }
+  if (state.screen !== 'calibrate' || !pendingAfterCalib) return; // left the screen while the camera was starting
 
   let heldSec = 0;
   let lastBeepSec = 4;
@@ -1070,14 +1083,13 @@ document.getElementById('btn-start-cam').addEventListener('click', async () => {
       calibTimerEl.textContent = 'Ready! 🏁';
       pipStatusEl.textContent = '📷 Active';
       sfx.countdown(0);
-      if (pendingAfterCalib) pendingAfterCalib();
+      finishCalibration();
     }
   }, 200);
 });
 
 document.getElementById('btn-skip-cam').addEventListener('click', () => {
-  stopCalibLoop();
-  if (pendingAfterCalib) pendingAfterCalib();
+  finishCalibration();
 });
 
 // Start Local Race (1P or 2P Split-Screen)
