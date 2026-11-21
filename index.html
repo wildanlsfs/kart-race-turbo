@@ -167,19 +167,6 @@
       </div>
     </section>
 
-    <!-- Step 1c: Wi-Fi host or join -->
-    <section class="wz-step hidden" data-step="role" aria-labelledby="wz-t-role">
-      <h1 id="wz-t-role" class="wz-title">Wi-Fi: host a room or join one?</h1>
-      <div class="wz-cards wz-cards-2">
-        <button id="wz-role-host" class="wz-card wz-item tone-orange" type="button" data-pick="host">
-          <span class="wz-ico">➕</span><strong>Host a room</strong><small>You pick the circuit, friends join your code</small>
-        </button>
-        <button id="wz-role-join" class="wz-card wz-item tone-blue" type="button" data-pick="join">
-          <span class="wz-ico">🔑</span><strong>Join a room</strong><small>Enter the 4-letter code or tap a room</small>
-        </button>
-      </div>
-    </section>
-
     <!-- Step 2: racer (the 3D kart on the right is the live preview) -->
     <section class="wz-step hidden" data-step="racer" aria-labelledby="wz-t-racer">
       <h1 id="wz-t-racer" class="wz-title">Choose your racer</h1>
@@ -221,28 +208,27 @@
     <section class="wz-step hidden" data-step="ready" aria-labelledby="wz-t-ready">
       <h1 id="wz-t-ready" class="wz-title">Ready to race?</h1>
       <div id="wz-summary" class="wz-summary"></div>
-      <label id="wz-host-name-row" class="wz-name-row hidden">Your name <input id="lan-player-name-host" class="text-input" type="text" maxlength="16" value="Host" /></label>
-      <div id="wz-host-error" class="lan-error lan-error-msg hidden"></div>
       <button id="wz-start" class="btn-3d green-btn wz-start wz-item" type="button"><span class="btn-ico">🏁</span><span class="btn-txt"><strong>START!</strong><small id="wz-start-sub">Camera is optional</small></span></button>
     </section>
 
-    <!-- Wi-Fi join: code or room list -->
-    <section class="wz-step hidden" data-step="join" aria-labelledby="wz-t-join">
-      <h1 id="wz-t-join" class="wz-title">Join a room</h1>
+    <!-- Wi-Fi: one screen. Create a room (settings are picked in the lobby) or tap a room to join. -->
+    <section class="wz-step hidden" data-step="wifi" aria-labelledby="wz-t-wifi">
+      <h1 id="wz-t-wifi" class="wz-title">Race on Wi-Fi</h1>
       <div class="wz-join">
         <div class="lan-box">
           <label class="field-label" for="lan-player-name">Your name</label>
-          <input id="lan-player-name" class="text-input" type="text" maxlength="16" value="Guest" />
-          <div class="join-code-row">
-            <input id="lan-room-code" class="text-input code-input" type="text" maxlength="4" placeholder="CODE" aria-label="4-letter Room Code" autocapitalize="characters" />
-            <button id="btn-lan-join" class="btn-3d blue-btn wz-item" type="button"><span class="btn-txt"><strong>Join</strong></span></button>
-          </div>
+          <input id="lan-player-name" class="text-input" type="text" maxlength="16" value="Player" />
+          <button id="wz-wifi-host" class="btn-3d green-btn wz-item" type="button"><span class="btn-ico">➕</span><span class="btn-txt"><strong>Create a room</strong><small>Friends tap your room to join</small></span></button>
           <div id="lan-error" class="lan-error lan-error-msg hidden"></div>
-          <div id="lan-url-banner" class="lan-banner">Open <strong id="lan-url-text">http://localhost:3080</strong> on this Wi-Fi</div>
+          <div id="lan-url-banner" class="lan-banner">Friends open <strong id="lan-url-text">http://localhost:3080</strong> on this Wi-Fi</div>
         </div>
         <div class="lan-box">
-          <div class="lan-list-header"><h3>Rooms on this Wi-Fi</h3><button id="btn-lan-refresh" class="pip-mini-btn wz-item" type="button">↻ Refresh</button></div>
-          <div id="lan-rooms-list" class="lan-rooms-list"><p class="muted-note">No rooms yet. Ask the host to create one.</p></div>
+          <div class="lan-list-header"><h3>Join a room</h3><button id="btn-lan-refresh" class="pip-mini-btn wz-item" type="button">↻ Refresh</button></div>
+          <div id="lan-rooms-list" class="lan-rooms-list"><p class="muted-note">No rooms yet. Create one, or ask a friend to.</p></div>
+          <div class="join-code-row">
+            <input id="lan-room-code" class="text-input code-input" type="text" maxlength="4" placeholder="CODE" aria-label="4-letter Room Code" autocapitalize="characters" />
+            <button id="btn-lan-join" class="btn-3d blue-btn wz-item" type="button"><span class="btn-txt"><strong>Join with code</strong></span></button>
+          </div>
         </div>
       </div>
     </section>
@@ -292,6 +278,12 @@
         </div>
         <h3>Connected Racers (remaining slots are filled by computer racers):</h3>
         <div id="room-players-list" class="room-players-list"></div>
+        <div class="lan-pick-row"><span class="field-label">Your racer</span><div id="lan-racers" class="wz-seg" role="group" aria-label="Your racer"></div></div>
+        <div id="lan-host-opts" class="lan-host-opts">
+          <div class="lan-pick-row"><span class="field-label">Circuit</span><div id="lan-tracks" class="wz-seg" role="group" aria-label="Circuit"></div></div>
+          <div class="lan-pick-row"><span class="field-label">Computer racers</span><div id="lan-diff" class="wz-seg" role="group" aria-label="Difficulty"></div></div>
+          <div class="lan-pick-row"><span class="field-label">Laps</span><div id="lan-laps" class="wz-seg" role="group" aria-label="Laps"></div></div>
+        </div>
         <p id="lan-room-info" class="lan-room-info"></p>
         <p id="lan-wait-note" class="muted-note"></p>
         <div class="modal-actions">

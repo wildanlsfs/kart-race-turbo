@@ -1365,3 +1365,10 @@ body.cam-on #calib-canvas { display: block; }
   #calib-modal .calib-stage { gap: 4px; }
 }
 body[data-screen="calibrate"] .webcam-pip { visibility: hidden; pointer-events: none; }
+
+/* Wi-Fi lobby pickers (racer / circuit / difficulty / laps) */
+.lan-pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0; }
+.lan-host-opts.hidden { display: none; }
+.cream-card .wz-seg { background: #f0e9db; flex-wrap: wrap; }
+.cream-card .wz-seg-btn { min-width: 64px; min-height: 40px; font-size: .9rem; padding: 4px 12px; }
+.cream-card .wz-seg-btn.taken { opacity: .4; text-decoration: line-through; }
