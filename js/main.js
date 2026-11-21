@@ -1113,6 +1113,7 @@ function startLocalRace(mode) {
     totalLaps: state.laps,
     difficulty: state.difficulty,
     fillAI: true,
+    steerAssist: true,
   });
   renderer.camStates[0].initialized = false;
   renderer.camStates[1].initialized = false;

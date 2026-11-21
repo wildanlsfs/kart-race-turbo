@@ -16,9 +16,9 @@ function wrapAngle(a) {
 
 // Difficulty: only the AI changes (top-speed scale, how often it uses items, how often it slips up).
 export const DIFFICULTIES = {
-  santai: { id: 'santai', name: 'Santai', topScale: 0.93, itemUse: 0.45, itemDelay: 1.8, mistakeRate: 0.08 },
-  normal: { id: 'normal', name: 'Normal', topScale: 0.99, itemUse: 0.8, itemDelay: 1.0, mistakeRate: 0.03 },
-  pro: { id: 'pro', name: 'Pro', topScale: 1.04, itemUse: 1.0, itemDelay: 0.5, mistakeRate: 0.006 },
+  santai: { id: 'santai', name: 'Santai', assist: 0.8, topScale: 0.93, itemUse: 0.45, itemDelay: 1.8, mistakeRate: 0.08 },
+  normal: { id: 'normal', name: 'Normal', assist: 0.5, topScale: 0.99, itemUse: 0.8, itemDelay: 1.0, mistakeRate: 0.03 },
+  pro: { id: 'pro', name: 'Pro', assist: 0.2, topScale: 1.04, itemUse: 1.0, itemDelay: 0.5, mistakeRate: 0.006 },
 };
 export const DEFAULT_DIFFICULTY = 'normal';
 export function normalizeDifficulty(d) {
@@ -66,11 +66,13 @@ const STUCK_WINDOW = 3.0; // seconds without progress before the safety net rese
 const STUCK_MIN_PROGRESS = 0.008; // lap fraction (about 4 m) that counts as moving
 
 export class RaceSimulation {
-  constructor({ trackId = 'island', mode = '1p', players = [], totalLaps = 3, fillAI = true, difficulty = DEFAULT_DIFFICULTY, rng = Math.random } = {}) {
+  constructor({ trackId = 'island', mode = '1p', players = [], totalLaps = 3, fillAI = true, steerAssist = false, difficulty = DEFAULT_DIFFICULTY, rng = Math.random } = {}) {
     this.rng = rng;
     this.idSeq = 0;
     this.difficulty = normalizeDifficulty(difficulty);
     this.diff = DIFFICULTIES[this.difficulty];
+    // Steering assist for human players (off by default so balance runs and the server are unchanged): strength follows the difficulty.
+    this.steerAssist = Boolean(steerAssist);
     this.track = getTrackById(trackId);
     this.mode = mode;
     this.totalLaps = totalLaps;
@@ -460,6 +462,11 @@ export class RaceSimulation {
           steerEff *= clamp(1 - excess / 1.6, 0, 1);
         }
         kart.wheelDeg = steerInput * WHEEL_MAX_DEG;
+        const assist = this.steerAssist && !kart.isAI && !kart.finished ? this.diff.assist : 0;
+        if (assist > 0) {
+          // Speed-sensitive wheel: the faster the kart, the less a given wheel angle turns it (small hand wobble no longer zig-zags it).
+          steerEff *= 1 - 0.4 * assist * clamp((kart.speed - 14) / 26, 0, 1);
+        }
         // Bicycle model. Positive steer = right = heading decreases.
         const tire = shapeSteer(steerEff) * TIRE_MAX;
         const yawDemand = (kart.speed / WHEELBASE) * Math.tan(tire);
@@ -470,6 +477,18 @@ export class RaceSimulation {
           kart.speed -= kart.speed * over * UNDERSTEER_SCRUB * dt;
         }
         kart.heading = wrapAngle(kart.heading - yaw * dt);
+
+        if (assist > 0 && kart.speed > 4) {
+          // Road assist (like Mario Kart's Smart Steering, but gentle): the further from the road centre, the more the nose
+          // is drawn along the road. The driver's own wheel always wins: the pull fades out as the wheel is turned.
+          const look = (4 + kart.speed * 0.3) / this.track.totalLength;
+          const tp = this.track.getPointAt(nearest.sample.s + look);
+          const want = Math.atan2(tp.x - kart.x, tp.z - kart.z);
+          const edge = clamp((Math.abs(lateralOffset) - halfRoad * 0.25) / (halfRoad * 0.6), 0, 1);
+          const pull = assist * (0.25 + 0.75 * edge) * (1 - Math.min(1, Math.abs(steerInput) * 1.6));
+          const rate = clamp(wrapAngle(want - kart.heading) * 2.2, -0.9, 0.9) * pull; // rad/s
+          kart.heading = wrapAngle(kart.heading + rate * dt);
+        }
 
         if (kart.speed > 1) {
           // Soft barrier: near the kerb the nose may only point away from the road centre by an angle
