@@ -101,9 +101,9 @@ function attachWsConnection(socket, onMessage, onClose) {
       buffer = buffer.subarray(offset + payloadLen);
 
       if (opcode === 0x8) {
-        // Close frame
-        closed = true;
+        // Close frame: a clean browser close must still run onClose, or its room is never freed
         socket.end();
+        handleClose();
         return;
       }
       if (opcode === 0x9) {

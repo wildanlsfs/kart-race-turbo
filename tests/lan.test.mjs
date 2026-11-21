@@ -164,3 +164,23 @@ test('The room list only shows rooms a friend can still join (lobby, free seat),
     await srv.close();
   }
 });
+
+test('a room is freed when its only player closes the browser socket (real WebSocket close frame), not left in the join list', async () => {
+  const srv = await createLanServer({ port: 0, host: '127.0.0.1', quiet: true });
+  try {
+    const port = srv.server.address().port;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    await new Promise((r) => ws.addEventListener('open', r, { once: true }));
+    const created = new Promise((r) => ws.addEventListener('message', (ev) => {
+      if (JSON.parse(ev.data).type === 'room_state') r();
+    }));
+    ws.send(JSON.stringify({ type: 'create_room', name: 'Host' }));
+    await created;
+    assert.equal(srv.getLanInfo().rooms.length, 1);
+    ws.close(); // sends a proper close frame, like a browser tab closing
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(srv.getLanInfo().rooms.length, 0, 'abandoned room must disappear');
+  } finally {
+    await srv.close();
+  }
+});
