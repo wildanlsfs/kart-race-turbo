@@ -6,6 +6,8 @@
 // bottom edge for 7 % of the frames, and an out-of-frame wrist keeps a high visibility score while its position is
 // a guess (it jumped 1.0 shoulder-widths in one frame). So the rule is "everything needed to grip a wheel fits".
 
+import { LIGHT } from './cam-light.js';
+
 export const FRAMING = {
   1: { // one player, centred
     zones: [{ cx: 0.5, tolX: 0.13 }],
@@ -39,12 +41,12 @@ export function guideFor(playerCount, slot = 0) {
 export function checkFraming(pose, playerCount = 1, slot = 0, brightness = null) {
   const f = FRAMING[playerCount === 2 ? 2 : 1];
   const who = playerCount === 2 ? `Player ${slot + 1}: ` : '';
-  const issues = [];
+  const issues = [], hints = [];
   const add = (code, text) => issues.push({ code, text: who + text });
   const lm = pose && (Array.isArray(pose) ? pose : pose.landmarks);
   if (!lm || lm.length < 17 || !lm[11] || !lm[12]) {
     add('missing', playerCount === 2 ? 'step into your side of the picture' : 'step in front of the camera');
-    return { ok: false, issues };
+    return { ok: false, issues, hints };
   }
   const ls = lm[11], rs = lm[12], lw = lm[15], rw = lm[16];
   const sw = Math.hypot(ls.x - rs.x, ls.y - rs.y);
@@ -53,6 +55,8 @@ export function checkFraming(pose, playerCount = 1, slot = 0, brightness = null)
   const z = f.zones[slot] || f.zones[0];
 
   if (brightness !== null && brightness < 55) add('dark', 'too dark, face a lamp or window');
+  // soft hint: dim but usable (the game brightens pose frames); never blocks "ok"
+  else if (brightness !== null && brightness < LIGHT.dim) hints.push({ code: 'dim', text: who + 'a bit dim, add light from the front for smoother steering', soft: true });
   if (sw < f.swMin) add('far', 'move closer to the camera');
   else if (sw > f.swMax || shY + HANDS_BELOW_SHOULDERS * sw > EDGE + 0.04) add('close', 'move back a little so your hands fit');
   if (dispCx < z.cx - z.tolX) add('left', 'move to the right on the preview');
@@ -60,7 +64,7 @@ export function checkFraming(pose, playerCount = 1, slot = 0, brightness = null)
   if (shY < f.shYMin) add('high', 'tilt the camera up or sit lower');
   else if (shY > f.shYMax) add('low', 'tilt the camera down or sit higher');
   if (!wristSeen(lw) || !wristSeen(rw) || !inFrame(lw) || !inFrame(rw)) add('hands', 'hold both hands up in front of you, as if gripping a wheel');
-  return { ok: issues.length === 0, issues };
+  return { ok: issues.length === 0, issues, hints };
 }
 
 // Judge everyone needed for the mode. Poses are assigned to slots by position (left on the preview = slot 0 = player 1).
@@ -68,17 +72,20 @@ export function checkAllFraming(poses, playerCount = 1, brightness = null) {
   const lmOf = (p) => (p && (Array.isArray(p) ? p : p.landmarks)) || null;
   const list = (poses || []).map(lmOf).filter((l) => l && l[11] && l[12]);
   if (playerCount !== 2) {
-    if (!list.length) return { ok: false, perSlot: [checkFraming(null, 1, 0, brightness)], issues: checkFraming(null, 1, 0).issues };
+    if (!list.length) return { ok: false, perSlot: [checkFraming(null, 1, 0, brightness)], issues: checkFraming(null, 1, 0).issues, hints: [] };
     // the player closest to the middle with the widest shoulders is the driver
     const best = [...list].sort((a, b) => score(b) - score(a))[0];
     const r = checkFraming(best, 1, 0, brightness);
-    return { ok: r.ok, perSlot: [r], issues: r.issues };
+    return { ok: r.ok, perSlot: [r], issues: r.issues, hints: r.hints };
   }
   const byX = [...list].sort((a, b) => (1 - (a[11].x + a[12].x) / 2) - (1 - (b[11].x + b[12].x) / 2)); // left to right on the preview
   let slots = [null, null];
   if (byX.length >= 2) slots = [byX[0], byX[byX.length - 1]];
   else if (byX.length === 1) { const d = 1 - (byX[0][11].x + byX[0][12].x) / 2; slots[d < 0.5 ? 0 : 1] = byX[0]; }
   const perSlot = slots.map((p, i) => checkFraming(p, 2, i, brightness));
-  return { ok: perSlot.every((r) => r.ok), perSlot, issues: perSlot.flatMap((r) => r.issues) };
+  return { ok: perSlot.every((r) => r.ok), perSlot, issues: perSlot.flatMap((r) => r.issues), hints: dedupe(perSlot.flatMap((r) => r.hints || [])) };
 }
 const score = (l) => Math.hypot(l[11].x - l[12].x, l[11].y - l[12].y) - Math.abs(1 - (l[11].x + l[12].x) / 2 - 0.5) * 0.35;
+
+// 2P: one dim hint is enough (both slots see the same picture).
+function dedupe(h) { const seen = new Set(); return h.filter((x) => (seen.has(x.code) ? false : seen.add(x.code))).map((x) => ({ ...x, text: x.text.replace(/^Player \d: /, '') })); }

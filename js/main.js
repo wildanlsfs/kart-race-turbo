@@ -8,6 +8,7 @@ import { RaceRenderer } from './renderer.js';
 import { SoundFX } from './audio.js';
 import { LanClient } from './net.js';
 import { checkAllFraming, guideFor } from './framing.js';
+import { CAM_VIDEO, lowLightTune, LightMeter, brightFrame } from './cam-light.js';
 import { WheelTouch, stepKeyWheel, WHEEL_LIMIT_DEG } from './touchsteer.js';
 import { AdaptiveScale } from './perf.js';
 
@@ -671,11 +672,12 @@ async function startWebcamAndWorker() {
     try {
       pipStatusEl.textContent = '📷 Allow Camera...';
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, min: 15 }, facingMode: 'user' },
+        video: CAM_VIDEO,
         audio: false,
       });
       videoEl.srcObject = stream;
       await videoEl.play();
+      lowLightTune(stream.getVideoTracks()[0]).catch(() => {}); // best effort, never blocks
       state.webcamEnabled = true;
 
       pipStatusEl.textContent = '⏳ Loading Pose AI...';
@@ -709,7 +711,7 @@ async function startWebcamAndWorker() {
           if (poseWorker) {
             if (!workerBusy) {
               workerBusy = true;
-              createImageBitmap(videoEl, { resizeWidth: state.poseW, resizeHeight: state.poseH })
+              createImageBitmap(poseSource(), { resizeWidth: state.poseW, resizeHeight: state.poseH })
                 .then((bmp) => poseWorker.postMessage({ type: 'frame', bitmap: bmp, ts: performance.now() }, [bmp]))
                 .catch(() => { workerBusy = false; });
             }
@@ -945,18 +947,16 @@ function stopCalibLoop() {
 const calibCanvas = document.getElementById('calib-canvas');
 const calibCtx = calibCanvas.getContext('2d');
 const calibTipsEl = document.getElementById('calib-tips');
-const brightCanvas = document.createElement('canvas'); brightCanvas.width = 16; brightCanvas.height = 12;
-const brightCtx = brightCanvas.getContext('2d', { willReadFrequently: true });
-let brightness = null, brightAt = 0, framingResult = { ok: false, issues: [], perSlot: [] }, tipsKey = '';
+const lightMeter = new LightMeter(videoEl);
+let brightness = null, framingResult = { ok: false, issues: [], hints: [], perSlot: [] }, tipsKey = '';
 function sampleBrightness(nowMs) {
-  if (nowMs - brightAt < 500 || !state.webcamEnabled || videoEl.readyState < 2) return;
-  brightAt = nowMs;
-  try {
-    brightCtx.drawImage(videoEl, 0, 0, 16, 12);
-    const d = brightCtx.getImageData(0, 0, 16, 12).data; let sum = 0;
-    for (let i = 0; i < d.length; i += 4) sum += d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-    brightness = sum / (d.length / 4);
-  } catch (_) { brightness = null; }
+  if (!state.webcamEnabled) return;
+  brightness = lightMeter.sample(nowMs);
+}
+// Pose model input: brightened copy when the room is dim (the on-screen preview always uses the raw video).
+function poseSource() {
+  sampleBrightness(performance.now());
+  return brightFrame(videoEl, lightMeter.gain, state.poseW, state.poseH);
 }
 function drawCalibStage(nowMs) {
   const n = state.mode === '2p' ? 2 : 1;
@@ -992,11 +992,11 @@ function drawCalibStage(nowMs) {
   }
   for (const sl of slots) drawControls(c, w, h, motionCtrl.slots[sl].hud);
   calibCanvas.classList.toggle('good', okAll);
-  const tips = okAll ? [{ text: n === 2 ? 'Both players are in position' : 'Perfect position', good: true }] : framingResult.issues;
+  const tips = (okAll ? [{ text: n === 2 ? 'Both players are in position' : 'Perfect position', good: true }] : framingResult.issues.slice()).concat(framingResult.hints || []);
   const key = tips.map((t) => t.text).join('|') + (okAll ? '1' : '0');
   if (key !== tipsKey) {
     tipsKey = key;
-    calibTipsEl.replaceChildren(...tips.map((t) => { const li = document.createElement('li'); li.textContent = t.text; if (t.good) li.className = 'good'; return li; }));
+    calibTipsEl.replaceChildren(...tips.map((t) => { const li = document.createElement('li'); li.textContent = t.text; if (t.good) li.className = 'good'; else if (t.soft) li.className = 'soft'; return li; }));
   }
 }
 

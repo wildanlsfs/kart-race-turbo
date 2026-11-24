@@ -63,3 +63,26 @@ test('Imaginary buttons: in 2P the neighbours\' NOS and FIRE never touch, and ea
     for (const k of [b.nos, b.fire]) assert.ok(k.x - k.r > 0 && k.x + k.r < 1 && k.y - k.r > 0 && k.y + k.r < 1, `mode ${n} slot ${s}: button off the picture`);
   }
 });
+
+import { LIGHT } from '../js/cam-light.js';
+test('Framing: dim light gives a soft hint that never blocks "ok"; dark stays a blocking issue', () => {
+  const g = guideFor(1);
+  const p = person(g.cx, g.sw, g.shY);
+  const dim = checkAllFraming([p], 1, LIGHT.dim - 5);
+  assert.equal(dim.ok, true);
+  assert.ok(dim.hints.some((h) => h.code === 'dim' && h.soft));
+  assert.ok(!dim.issues.some((i) => i.code === 'dark'));
+  const dark = checkAllFraming([p], 1, 40);
+  assert.equal(dark.ok, false);
+  assert.ok(dark.issues.some((i) => i.code === 'dark'));
+  assert.equal(dark.hints.length, 0, 'dark replaces dim');
+  assert.equal(checkAllFraming([p], 1, LIGHT.dim + 5).hints.length, 0);
+  assert.equal(checkAllFraming([p], 1, null).hints.length, 0);
+});
+test('Framing 2P: dim hint appears once, without a player prefix', () => {
+  const g1 = guideFor(2, 0), g2 = guideFor(2, 1);
+  const r = checkAllFraming([person(g1.cx, g1.sw, g1.shY), person(g2.cx, g2.sw, g2.shY)], 2, 70);
+  assert.equal(r.ok, true);
+  assert.equal(r.hints.filter((h) => h.code === 'dim').length, 1);
+  assert.ok(!/^Player/.test(r.hints[0].text));
+});
